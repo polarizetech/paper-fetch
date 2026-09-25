@@ -1,0 +1,44 @@
+{
+ "id": "https://openalex.org/W7",
+ "doi": "https://doi.org/10.5555/example.001",
+ "ids": {
+  "openalex": "https://openalex.org/W7",
+  "pmid": "https://pubmed.ncbi.nlm.nih.gov/11111111"
+ },
+ "title": "An example open-access article",
+ "display_name": "An example open-access article",
+ "publication_year": 2020,
+ "authorships": [
+  {
+   "author": {
+    "display_name": "Ada Example"
+   }
+  },
+  {
+   "author": {
+    "display_name": "Ben Sample"
+   }
+  }
+ ],
+ "open_access": {
+  "is_oa": true,
+  "oa_status": "gold"
+ },
+ "has_content": {},
+ "locations": [],
+ "is_retracted": false,
+ "abstract_inverted_index": {
+  "An": [
+   0
+  ],
+  "abstract": [
+   1
+  ],
+  "in": [
+   2
+  ],
+  "order.": [
+   3
+  ]
+ }
+}

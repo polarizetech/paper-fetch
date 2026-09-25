@@ -1,0 +1,9 @@
+{
+ "is_pmc_openaccess": true,
+ "license_code": "CC BY",
+ "is_manuscript": false,
+ "is_retracted": false,
+ "xml_url": "s3://pmc-oa-opendata/PMC1.2/PMC1.2.xml?md5=abc",
+ "pdf_url": "s3://pmc-oa-opendata/PMC1.2/PMC1.2.pdf?md5=def",
+ "text_url": null
+}

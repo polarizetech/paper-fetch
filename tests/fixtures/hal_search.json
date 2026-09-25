@@ -1,0 +1,34 @@
+{
+ "response": {
+  "docs": [
+   {
+    "halId_s": "hal-00000001",
+    "title_s": [
+     "An example HAL deposit"
+    ],
+    "doiId_s": "10.5555/hal.001",
+    "producedDateY_i": 2011,
+    "openAccess_bool": true,
+    "fileMain_s": "https://hal.science/hal-00000001/document",
+    "licence_s": "https://about.hal.science/hal-authorisation-v1/",
+    "authFullName_s": [
+     "A. Author"
+    ]
+   },
+   {
+    "halId_s": "hal-2",
+    "title_s": [
+     "An example HAL deposit"
+    ],
+    "doiId_s": null,
+    "producedDateY_i": 2011,
+    "openAccess_bool": false,
+    "fileMain_s": "https://hal.science/hal-00000001/document",
+    "licence_s": "https://about.hal.science/hal-authorisation-v1/",
+    "authFullName_s": [
+     "A. Author"
+    ]
+   }
+  ]
+ }
+}

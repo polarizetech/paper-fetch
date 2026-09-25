@@ -1,0 +1,18 @@
+{
+ "response": {
+  "docs": [
+   {
+    "id": "10.1371/journal.pcbi.1003285",
+    "title_display": "Ten Simple Rules for Reproducible Computational Research",
+    "publication_date": "2013-10-24T00:00:00Z",
+    "journal": "PLoS Computational Biology",
+    "author_display": [
+     "Geir Kjetil Sandve",
+     "Anton Nekrutenko",
+     "James Taylor",
+     "Eivind Hovig"
+    ]
+   }
+  ]
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "results": [
+  {
+   "title": "Example <strong>article</strong>",
+   "url": "https://journals.plos.org/plosone/article?id=10.1371%2Fjournal.pone.0000001",
+   "content": "an example snippet",
+   "engines": [
+    "brave"
+   ]
+  },
+  {
+   "title": "A lab page",
+   "url": "https://lab.example.edu/p.pdf",
+   "content": "",
+   "engines": [
+    "brave"
+   ]
+  }
+ ],
+ "unresponsive_engines": [
+  [
+   "duckduckgo",
+   "CAPTCHA"
+  ]
+ ]
+}

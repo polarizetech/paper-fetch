@@ -1,0 +1,20 @@
+[
+ {
+  "oci": "1-2",
+  "citing": "omid:br/2 doi:10.5555/CITING.001 openalex:W4410000001",
+  "cited": "omid:br/1 doi:10.5555/cited.001",
+  "creation": "2025-06",
+  "timespan": "P1Y",
+  "journal_sc": "no",
+  "author_sc": "yes"
+ },
+ {
+  "oci": "1-3",
+  "citing": "omid:br/3 doi:10.5555/not-held pmid:111",
+  "cited": "omid:br/1 doi:10.5555/cited.001",
+  "creation": "2025-01-24",
+  "timespan": "P7M",
+  "journal_sc": "no",
+  "author_sc": "no"
+ }
+]

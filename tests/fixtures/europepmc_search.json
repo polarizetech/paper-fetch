@@ -1,0 +1,42 @@
+{
+ "resultList": {
+  "result": [
+   {
+    "id": "1",
+    "pmcid": "PMC9",
+    "doi": "10.5555/A",
+    "pmid": "9",
+    "title": "Open article",
+    "pubYear": "2020",
+    "isOpenAccess": "Y",
+    "license": "cc by",
+    "source": "MED",
+    "authorString": "Example A, Sample B, Third C, Fourth D",
+    "journalInfo": {
+     "journal": {
+      "title": "Example Journal"
+     }
+    }
+   },
+   {
+    "id": "2",
+    "pmcid": "PMC8",
+    "doi": "10.5555/b",
+    "title": "Closed article",
+    "pubYear": "2019",
+    "isOpenAccess": "N",
+    "source": "MED"
+   },
+   {
+    "id": "PPR5",
+    "doi": "10.1101/2026.01.01.000001",
+    "title": "A preprint",
+    "pubYear": "2026",
+    "isOpenAccess": "Y",
+    "inEPMC": "Y",
+    "source": "PPR",
+    "license": "cc by"
+   }
+  ]
+ }
+}

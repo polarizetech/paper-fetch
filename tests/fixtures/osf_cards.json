@@ -1,0 +1,109 @@
+{
+ "included": [
+  {
+   "type": "index-card",
+   "attributes": {
+    "resourceMetadata": {
+     "@id": "https://osf.io/abcde",
+     "title": [
+      {
+       "@value": "An example preprint"
+      }
+     ],
+     "identifier": [
+      {
+       "@value": "https://doi.org/10.31234/osf.io/abcde"
+      },
+      {
+       "@value": "https://osf.io/abcde"
+      }
+     ],
+     "rights": [
+      {
+       "@id": "https://creativecommons.org/licenses/by/4.0/legalcode",
+       "name": [
+        {
+         "@value": "CC-By Attribution 4.0 International"
+        }
+       ]
+      }
+     ],
+     "publisher": [
+      {
+       "name": [
+        {
+         "@value": "PsyArXiv"
+        }
+       ]
+      }
+     ],
+     "dateCreated": [
+      {
+       "@value": "2024-06-28"
+      }
+     ],
+     "creator": [
+      {
+       "name": [
+        {
+         "@value": "A. Author"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "index-card",
+   "attributes": {
+    "resourceMetadata": {
+     "@id": "https://osf.io/fghij",
+     "title": [
+      {
+       "@value": "An example preprint"
+      }
+     ],
+     "identifier": [
+      {
+       "@value": "https://osf.io/fghij"
+      }
+     ],
+     "rights": [
+      {
+       "@id": "https://osf.io/nolicense",
+       "name": [
+        {
+         "@value": "No license"
+        }
+       ]
+      }
+     ],
+     "publisher": [
+      {
+       "name": [
+        {
+         "@value": "PsyArXiv"
+        }
+       ]
+      }
+     ],
+     "dateCreated": [
+      {
+       "@value": "2024-06-28"
+      }
+     ],
+     "creator": [
+      {
+       "name": [
+        {
+         "@value": "A. Author"
+        }
+       ]
+      }
+     ]
+    }
+   }
+  }
+ ]
+}

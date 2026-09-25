@@ -1,0 +1,22 @@
+{
+ "results": [
+  {
+   "id": 1,
+   "title": "Repository copy",
+   "yearPublished": 2011,
+   "doi": "10.5555/X",
+   "downloadUrl": "https://core.ac.uk/download/1.pdf",
+   "authors": [
+    {
+     "name": "A. Author"
+    }
+   ]
+  },
+  {
+   "id": 2,
+   "title": "Metadata only",
+   "yearPublished": 2012,
+   "doi": "10.5555/y"
+  }
+ ]
+}

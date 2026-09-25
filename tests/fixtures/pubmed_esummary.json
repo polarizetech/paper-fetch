@@ -1,0 +1,33 @@
+{
+ "result": {
+  "24204232": {
+   "title": "Ten simple rules for reproducible computational research.",
+   "pubdate": "2013 Oct",
+   "fulljournalname": "PLoS computational biology",
+   "authors": [
+    {
+     "name": "Sandve GK"
+    },
+    {
+     "name": "Nekrutenko A"
+    },
+    {
+     "name": "Taylor J"
+    },
+    {
+     "name": "Hovig E"
+    }
+   ],
+   "articleids": [
+    {
+     "idtype": "pmc",
+     "value": "PMC3812051"
+    },
+    {
+     "idtype": "doi",
+     "value": "10.1371/journal.pcbi.1003285"
+    }
+   ]
+  }
+ }
+}

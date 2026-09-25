@@ -1,0 +1,40 @@
+{
+ "meta": {
+  "count": 2
+ },
+ "results": [
+  {
+   "id": "https://openalex.org/W7",
+   "doi": "https://doi.org/10.5555/EXAMPLE.001",
+   "display_name": "An example open-access article",
+   "publication_year": 2020,
+   "authorships": [
+    {
+     "author": {
+      "display_name": "Ada Example"
+     }
+    }
+   ],
+   "open_access": {
+    "is_oa": true,
+    "oa_status": "gold"
+   },
+   "has_content": {
+    "pdf": true
+   },
+   "is_retracted": false
+  },
+  {
+   "id": "https://openalex.org/W8",
+   "doi": null,
+   "display_name": "A second example",
+   "publication_year": 2019,
+   "authorships": [],
+   "open_access": {
+    "is_oa": false
+   },
+   "has_content": {},
+   "is_retracted": false
+  }
+ ]
+}

@@ -1,0 +1,14 @@
+{
+ "collection": [
+  {
+   "version": "1",
+   "jatsxml": "https://example.org/v1.xml",
+   "license": "cc_by"
+  },
+  {
+   "version": "2",
+   "jatsxml": "https://example.org/v2.xml",
+   "license": "cc_no"
+  }
+ ]
+}

@@ -1,0 +1,71 @@
+{
+ "id": "doi_dedup___::0001",
+ "mainTitle": "An example merged record",
+ "publicationDate": "2017-10-02",
+ "bestAccessRight": {
+  "code": "c_abf2",
+  "label": "OPEN"
+ },
+ "openAccessColor": "gold",
+ "authors": [
+  {
+   "fullName": "A. Author"
+  }
+ ],
+ "pids": [
+  {
+   "scheme": "doi",
+   "value": "10.5555/example.002"
+  },
+  {
+   "scheme": "doi",
+   "value": "10.1101/000002"
+  },
+  {
+   "scheme": "pmid",
+   "value": "22222222"
+  },
+  {
+   "scheme": "pmc",
+   "value": "pmc2222222"
+  }
+ ],
+ "instances": [
+  {
+   "urls": [
+    "https://doi.org/10.5555/example.002"
+   ],
+   "license": "CC BY"
+  },
+  {
+   "urls": [
+    "https://repo.example.edu/landing/7"
+   ],
+   "license": "CC BY"
+  },
+  {
+   "urls": [
+    "https://journal.example.org/article/file?id=x&type=printable"
+   ],
+   "license": "CC BY"
+  },
+  {
+   "urls": [
+    "https://pubmed.ncbi.nlm.nih.gov/22222222"
+   ],
+   "license": null
+  },
+  {
+   "urls": [
+    "https://mirror.example.org/copy.pdf"
+   ],
+   "license": null
+  },
+  {
+   "urls": [
+    "https://closed.example.com/x.pdf"
+   ],
+   "license": "publisher-specific"
+  }
+ ]
+}
