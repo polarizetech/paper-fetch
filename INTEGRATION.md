@@ -62,8 +62,8 @@ what each provider needs and whether it is ready; `paper-fetch status` shows whi
 from paper_fetch import Library, NotFound
 from paper_fetch.config import load_env
 
-load_env()                 # Library.default() does NOT read ~/.config/paper-fetch/*.env; the CLI and MCP server do
-lib = Library.default()    # the store named by PAPER_FETCH_STORE, providers from the environment
+load_env()  # Library.default() does NOT read ~/.config/paper-fetch/*.env; the CLI and MCP server do
+lib = Library.default()  # the store named by PAPER_FETCH_STORE, providers from the environment
 ```
 
 Skip `load_env()` if the variables are already in the process environment. A consumer that wants
@@ -74,26 +74,28 @@ in-memory store and a `note` saying so; `library(require_store=True)` exits inst
 ## The calls you will use
 
 ```python
-rec = lib.fetch("10.1371/journal.pcbi.1003285")   # DOI, "W2036318837", "pmid:…", "PMC…", "arxiv:…"
-rec["from"]        # "library" | "retrieved" | "not-obtainable"
-rec["full_text"]   # True only if readable text passed the gate
+rec = lib.fetch("10.1371/journal.pcbi.1003285")  # DOI, "W2036318837", "pmid:…", "PMC…", "arxiv:…"
+rec["from"]  # "library" | "retrieved" | "not-obtainable"
+rec["full_text"]  # True only if readable text passed the gate
 
-text = lib.text(rec["work"])                      # raises NotFound if there is no readable text
-prov = lib.provenance(rec["work"])                # route, source URL, licence, sha256s, every attempt
-lib.verify(rec["work"])                           # re-hash stored files against provenance
+text = lib.text(rec["work"])  # raises NotFound if there is no readable text
+prov = lib.provenance(rec["work"])  # route, source URL, licence, sha256s, every attempt
+lib.verify(rec["work"])  # re-hash stored files against provenance
 
-res = lib.search("auditory steady-state response 40 Hz")      # every enabled search provider
-res["providers"]   # {"pubmed": {"status": "ok", "n": 10}, "core": {"status": "unavailable", ...}}
-[h for h in res["hits"] if not h["full_text_in_library"]]    # merged by DOI/PMCID/PMID; what to fetch next
-lib.search("myogenic", providers=["europepmc", "pubmed"])     # choose providers per call
-res["providers"]["web"]   # fallback: ran only if no open-access hit ("why_ran"), else "not-needed"
-[h["urls"] for h in res["hits"]]                            # web hits carry URLs; their ids are parsed, unverified
+res = lib.search("auditory steady-state response 40 Hz")  # every enabled search provider
+res["providers"]  # {"pubmed": {"status": "ok", "n": 10}, "core": {"status": "unavailable", ...}}
+# hits are merged by DOI/PMCID/PMID; these are what to fetch next
+[h for h in res["hits"] if not h["full_text_in_library"]]
+lib.search("myogenic", providers=["europepmc", "pubmed"])  # choose providers per call
+res["providers"]["web"]  # fallback: ran only if no open-access hit ("why_ran"), else "not-needed"
+[h["urls"] for h in res["hits"]]  # web hits carry URLs; their ids are parsed, unverified
 
-lib.search_library("myogenic", full_text=True)    # only what we already hold, no network
+lib.search_library("myogenic", full_text=True)  # only what we already hold, no network
 
-g = lib.citations("10.1016/j.cub.2024.06.028")    # who cites it (OpenCitations); lib.references(...) for what it cites
-g["n"], g["held"]                                 # how many, how many already in the library
-[i["ids"]["doi"] for i in g["items"] if not i["in_library"]]   # what to fetch next
+# who cites it (OpenCitations); lib.references(...) for what it cites
+g = lib.citations("10.1016/j.cub.2024.06.028")
+g["n"], g["held"]  # how many, how many already in the library
+[i["ids"]["doi"] for i in g["items"] if not i["in_library"]]  # what to fetch next
 ```
 
 Field-by-field shapes are in [README § MCP server](README.md#tool-contract); the Python calls return
@@ -105,7 +107,11 @@ the same records.
 from paper_fetch import Library, OpenAlex, S3Store, build
 
 oa = OpenAlex()
-lib = Library(S3Store.from_env(), oa, providers=build(oa.http, openalex_client=oa, names=["pmc-s3", "europepmc"]))
+lib = Library(
+    S3Store.from_env(),
+    oa,
+    providers=build(oa.http, openalex_client=oa, names=["pmc-s3", "europepmc"]),
+)
 ```
 
 or set `PAPER_FETCH_PROVIDERS` / `PAPER_FETCH_SEARCH_PROVIDERS`. **Always read
@@ -145,8 +151,9 @@ contract is in [README § MCP server](README.md#mcp-server). There is deliberate
 ## A copy you legitimately hold
 
 ```python
-lib.add_local("paper.pdf", "10.1109/MCSE.2019.2900945",
-              rights="purchased via Article Galaxy 2026-09-13")
+lib.add_local(
+    "paper.pdf", "10.1109/MCSE.2019.2900945", rights="purchased via Article Galaxy 2026-09-13"
+)
 ```
 
 or `paper-fetch add paper.pdf 10.1109/MCSE.2019.2900945 --rights "..."`. `rights` is required and
