@@ -7,7 +7,7 @@ verifiable route: anonymous, md5 per file) is never asked, and the library would
 open-access copy known" for a paper that is in PMC. NCBI's ID converter fills the gap, and it
 also knows the PMCIDs of preprints that PMC hosts.
 
-The converter asks for `tool` and `email`; the email is sent only if `PAPERLIB_EMAIL` is set.
+The converter asks for `tool` and `email`; the email is sent only if `PAPER_FETCH_EMAIL` is set.
 
 A failure here is never fatal: identifiers are an optimisation for the providers, not a gate.
 """
@@ -33,9 +33,9 @@ def enrich(ids: dict[str, Any], http: HttpClient) -> tuple[dict[str, Any], str]:
     q = ids.get("doi") or ids.get("pmid") or ids.get("pmcid")
     if not q:
         return ids, "nothing to convert from"
-    params = {"ids": q, "format": "json", "tool": "paperlib"}
-    if os.environ.get("PAPERLIB_EMAIL"):
-        params["email"] = os.environ["PAPERLIB_EMAIL"]
+    params = {"ids": q, "format": "json", "tool": "paper-fetch"}
+    if os.environ.get("PAPER_FETCH_EMAIL"):
+        params["email"] = os.environ["PAPER_FETCH_EMAIL"]
     try:
         r = http.get(f"{URL}?{urllib.parse.urlencode(params)}", timeout=15, retries=1)
     except Exception as e:  # noqa: BLE001 -- never fatal, recorded in provenance instead

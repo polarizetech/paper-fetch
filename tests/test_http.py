@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from paperlib.http import Http, user_agent
+from paper_fetch.http import Http, user_agent
 
 
 class _Resp(io.BytesIO):
@@ -41,7 +41,7 @@ def test_success_is_counted_and_logged(monkeypatch: pytest.MonkeyPatch) -> None:
     r = h.get("https://x.example/a")
     assert (r.status, r.body, r.url) == (200, b"hello", "https://final.example/x")
     assert (h.calls, h.bytes_in, h.log) == (1, 5, [("https://x.example/a", 200, 5)])
-    assert seen["ua"].startswith("paperlib/")
+    assert seen["ua"].startswith("paper-fetch/")
 
 
 def test_a_429_is_returned_on_the_first_attempt(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -78,5 +78,5 @@ def test_5xx_and_transport_errors_are_retried_then_raised(monkeypatch: pytest.Mo
 
 def test_user_agent_carries_contact_only_when_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "mailto" not in user_agent()
-    monkeypatch.setenv("PAPERLIB_EMAIL", "someone@example.org")
+    monkeypatch.setenv("PAPER_FETCH_EMAIL", "someone@example.org")
     assert user_agent().endswith("(mailto:someone@example.org)")

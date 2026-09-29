@@ -1,17 +1,17 @@
 """Command line.
 
-    paperlib fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...]  library first, then OpenAlex + OA routes
-    paperlib search "<query>" [--providers a,b]         every search provider, merged
-    paperlib providers                                   what is enabled, what each needs, its terms
-    paperlib library ["<query>"] [--full-text]          search only what is already held
-    paperlib text <id>                                   print stored full text
-    paperlib provenance <id>                             where a copy came from, every route tried
-    paperlib verify <id>                                 re-hash stored files against provenance
-    paperlib add <file.pdf> <id> --rights "..."          a copy you legitimately hold
-    paperlib citations <id> [--references] [-n N]        who cites it (or what it cites)
-    paperlib status | rebuild-index | adopt-orphans
+    paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] library first, then OpenAlex + OA routes
+    paper-fetch search "<query>" [--providers a,b]       every search provider, merged
+    paper-fetch providers                                what is enabled, what each needs, its terms
+    paper-fetch library ["<query>"] [--full-text]        search only what is already held
+    paper-fetch text <id>                                print stored full text
+    paper-fetch provenance <id>                          where a copy came from, every route tried
+    paper-fetch verify <id>                              re-hash stored files against provenance
+    paper-fetch add <file.pdf> <id> --rights "..."       a copy you legitimately hold
+    paper-fetch citations <id> [--references] [-n N]     who cites it (or what it cites)
+    paper-fetch status | rebuild-index | adopt-orphans
 
-`python -m paperlib ...` is the same program.
+`python -m paper_fetch ...` is the same program.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ LEGEND = "  ■ full text in library   □ in library, no full text"
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        prog="paperlib", description="A local library of legal open-access papers."
+        prog="paper-fetch", description="A local library of legal open-access papers."
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -189,7 +189,7 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
 
 
 def main(argv: Sequence[str] | None = None, *, library: Library | None = None) -> int:
-    """Entry point for `paperlib`. `library` lets tests supply an offline Library."""
+    """Entry point for `paper-fetch`. `library` lets tests supply an offline Library."""
     a = build_parser().parse_args(argv)
     load_env()
     try:

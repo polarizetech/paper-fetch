@@ -1,12 +1,13 @@
-"""paperlib: one deduplicated library of legal open-access full texts, found through OpenAlex.
+"""paper-fetch: one deduplicated library of legal open-access full texts, found through OpenAlex.
 
-    from paperlib import Library
+    from paper_fetch import Library
 
     lib = Library.default()                        # local store + providers from the environment
     rec = lib.fetch("10.1371/journal.pcbi.1003285")
     text = lib.text(rec["work"])
 
-The command line is ``paperlib`` (or ``python -m paperlib``); the MCP server is ``paperlib-mcp``.
+The command line is ``paper-fetch`` (or ``python -m paper_fetch``); the MCP server is
+``paper-fetch-mcp``.
 """
 
 from .citations import CitationsUnavailable, OpenCitations

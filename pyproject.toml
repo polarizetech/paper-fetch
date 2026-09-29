@@ -1,5 +1,5 @@
 [project]
-name = "paper-library"
+name = "paper-fetch"
 dynamic = ["version"]
 description = "A deduplicated local library of legal open-access scientific papers, with provenance, a CLI and an MCP server."
 readme = "README.md"
@@ -23,15 +23,15 @@ classifiers = [
 dependencies = ["pypdf>=4.0"]
 
 [project.urls]
-Repository = "https://github.com/polarizetech/paper-library"
+Repository = "https://github.com/polarizetech/paper-fetch"
 
 [project.optional-dependencies]
 mcp = ["mcp>=1.2"]
 s3 = ["boto3>=1.26"]
 
 [project.scripts]
-paperlib = "paperlib.cli:main"
-paperlib-mcp = "paperlib.mcp_server:main"
+paper-fetch = "paper_fetch.cli:main"
+paper-fetch-mcp = "paper_fetch.mcp_server:main"
 
 [dependency-groups]
 dev = [
@@ -48,13 +48,13 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
-path = "src/paperlib/__init__.py"
+path = "src/paper_fetch/__init__.py"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/paperlib"]
+packages = ["src/paper_fetch"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/paperlib", "tests", "README.md", "LICENSE", "pyproject.toml"]
+include = ["src/paper_fetch", "tests", "README.md", "LICENSE", "pyproject.toml"]
 
 # ---------------------------------------------------------------------------------------- ruff
 
@@ -117,7 +117,7 @@ addopts = ["-ra", "--strict-markers", "--strict-config"]
 filterwarnings = ["error"]
 
 [tool.coverage.run]
-source = ["paperlib"]
+source = ["paper_fetch"]
 branch = true
 
 [tool.coverage.report]

@@ -6,8 +6,8 @@ from pathlib import Path
 import pytest
 
 from conftest import PDF, FakeProvider, J, fixture, make_library
-from paperlib import cli
-from paperlib.providers import Hit
+from paper_fetch import cli
+from paper_fetch.providers import Hit
 
 DOI = "10.5555/example.001"
 
@@ -61,15 +61,15 @@ def test_search_and_providers(capsys: pytest.CaptureFixture[str]) -> None:
     lib.fetch(DOI)
     lib.search_providers = [
         FakeProvider("a", hits=[Hit("a", "An example", 2020, {"doi": DOI}, True)]),
-        FakeProvider("gated", needs=("PAPERLIB_TEST_NEVER_SET",)),
+        FakeProvider("gated", needs=("PAPER_FETCH_TEST_NEVER_SET",)),
     ]
     _, out, _ = run(["search", "example", "-n", "3"], capsys, library=lib)
     assert "1 distinct papers" in out
     assert " ■ 2020 [a] An example  10.5555/example.001" in out
-    assert "needs PAPERLIB_TEST_NEVER_SET" in out
+    assert "needs PAPER_FETCH_TEST_NEVER_SET" in out
     _, out, _ = run(["providers"], capsys, library=lib)
     assert "pmc-s3" in out
-    assert "needs PAPERLIB_EMAIL" in out
+    assert "needs PAPER_FETCH_EMAIL" in out
 
 
 def test_citations(capsys: pytest.CaptureFixture[str]) -> None:
@@ -110,7 +110,7 @@ def test_errors_are_short_and_have_exit_codes(capsys: pytest.CaptureFixture[str]
 def test_default_library_from_environment(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("PAPERLIB_STORE", "memory")
+    monkeypatch.setenv("PAPER_FETCH_STORE", "memory")
     code, out, _ = run(["library"], capsys)
     assert code == 0
     assert "0 work(s)" in out
@@ -119,8 +119,8 @@ def test_default_library_from_environment(
 def test_module_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
     import runpy  # noqa: PLC0415
 
-    monkeypatch.setenv("PAPERLIB_STORE", "memory")
-    monkeypatch.setattr("sys.argv", ["paperlib", "status"])
+    monkeypatch.setenv("PAPER_FETCH_STORE", "memory")
+    monkeypatch.setattr("sys.argv", ["paper-fetch", "status"])
     with pytest.raises(SystemExit) as exc:
-        runpy.run_module("paperlib", run_name="__main__")
+        runpy.run_module("paper_fetch", run_name="__main__")
     assert exc.value.code == 0

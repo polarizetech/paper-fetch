@@ -21,10 +21,10 @@ from conftest import (
     make_library,
     offline_openalex,
 )
-from paperlib import Library, LocalStore, MemoryStore, NotFound
-from paperlib.http import Response
-from paperlib.ids import doi_key
-from paperlib.providers import Hit, Location, ProviderUnavailable
+from paper_fetch import Library, LocalStore, MemoryStore, NotFound
+from paper_fetch.http import Response
+from paper_fetch.ids import doi_key
+from paper_fetch.providers import Hit, Location, ProviderUnavailable
 
 DOI = "10.5555/example.001"
 
@@ -318,7 +318,7 @@ def test_federated_search_merges_marks_and_reports_by_name() -> None:
     b = FakeProvider("b", hits=[Hit("b", "Same paper", 2020, {"doi": DOI, "pmcid": "PMC1"}, True)])
     dead = FakeProvider("dead", raise_=ProviderUnavailable("dead rate-limited us (HTTP 429)"))
     broken = FakeProvider("broken", raise_=KeyError("x"))
-    gated = FakeProvider("gated", needs=("PAPERLIB_TEST_NEVER_SET",))
+    gated = FakeProvider("gated", needs=("PAPER_FETCH_TEST_NEVER_SET",))
     lib.search_providers = [a, b, dead, broken, gated]
     res = lib.search("same")
     assert len(res["hits"]) == 2
@@ -362,9 +362,9 @@ def test_web_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert any(u.startswith("https://lab.example.edu") for h in r["hits"] for u in h["urls"])
     assert not any("/searches/web/" in k for k in lib.store.keys("papers/searches/"))
     assert lib.search("q2", web_fallback=False)["providers"]["web"]["status"] == "skipped"
-    monkeypatch.setenv("PAPERLIB_WEB_FALLBACK", "0")
+    monkeypatch.setenv("PAPER_FETCH_WEB_FALLBACK", "0")
     assert lib.search("q3")["providers"]["web"]["status"] == "skipped"
-    monkeypatch.delenv("PAPERLIB_WEB_FALLBACK")
+    monkeypatch.delenv("PAPER_FETCH_WEB_FALLBACK")
     lib.search_providers = []
     empty = lib.search("q4")
     assert empty["providers"]["web"]["why_ran"] == "no hits from the scholarly providers"

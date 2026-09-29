@@ -5,9 +5,9 @@ import hashlib
 import pytest
 
 from conftest import JATS, PDF, FakeProvider, good_provider
-from paperlib import BadApiKey
-from paperlib.providers import Location, ProviderUnavailable
-from paperlib.resolve import REFUSED, resolve
+from paper_fetch import BadApiKey
+from paper_fetch.providers import Location, ProviderUnavailable
+from paper_fetch.resolve import REFUSED, resolve
 
 
 def _one(fmt: str, body: bytes | None, md5: str | None = None) -> FakeProvider:
@@ -94,11 +94,11 @@ def test_a_download_failure_moves_on_to_the_next_location() -> None:
 
 def test_a_provider_missing_its_key_is_skipped_without_downloading() -> None:
     gated = good_provider("gated")
-    gated.needs = ("PAPERLIB_TEST_NEVER_SET",)
+    gated.needs = ("PAPER_FETCH_TEST_NEVER_SET",)
     r = resolve({}, [gated])
     assert r.fulltext is None
     assert gated.downloads == 0
-    assert r.attempts == [("gated", "skipped: needs PAPERLIB_TEST_NEVER_SET")]
+    assert r.attempts == [("gated", "skipped: needs PAPER_FETCH_TEST_NEVER_SET")]
 
 
 def test_a_bad_openalex_key_propagates() -> None:

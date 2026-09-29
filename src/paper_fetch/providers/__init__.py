@@ -1,7 +1,7 @@
 """The provider registry. Providers are named, ordered, and swappable without touching code.
 
-    PAPERLIB_PROVIDERS=pmc-s3,europepmc,openalex          # locate order (where copies come from)
-    PAPERLIB_SEARCH_PROVIDERS=europepmc,pubmed            # federated search set
+    PAPER_FETCH_PROVIDERS=pmc-s3,europepmc,openalex          # locate order (where copies come from)
+    PAPER_FETCH_SEARCH_PROVIDERS=europepmc,pubmed            # federated search set
 
 An unknown name RAISES with the known list, rather than being dropped: a typo that silently
 removed a provider would shrink every search with nothing on screen saying so.
@@ -88,7 +88,7 @@ DEFAULT_SEARCH = (
     "core",
 )
 # `web` is not in the default set: it runs as a FALLBACK (Library.search) when the set above finds
-# no open-access hit, or when named explicitly. PAPERLIB_WEB_FALLBACK=0 turns the fallback off.
+# no open-access hit, or when named explicitly. PAPER_FETCH_WEB_FALLBACK=0 turns the fallback off.
 FALLBACK_SEARCH = "web"
 
 
@@ -117,9 +117,9 @@ def build(
 ) -> list[Provider]:
     """Instantiate providers by name (or from the environment, or the defaults) for a purpose."""
     if purpose == "locate":
-        env_var, default = "PAPERLIB_PROVIDERS", DEFAULT_LOCATE
+        env_var, default = "PAPER_FETCH_PROVIDERS", DEFAULT_LOCATE
     elif purpose == "search":
-        env_var, default = "PAPERLIB_SEARCH_PROVIDERS", DEFAULT_SEARCH
+        env_var, default = "PAPER_FETCH_SEARCH_PROVIDERS", DEFAULT_SEARCH
     else:
         raise ValueError("purpose is 'locate' or 'search'")
     out = []

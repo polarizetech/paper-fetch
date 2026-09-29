@@ -1,8 +1,8 @@
-"""paperlib over MCP (stdio): the paper library as tools an LLM can call.
+"""paper-fetch over MCP (stdio): the paper library as tools an LLM can call.
 
-    paperlib-mcp                      # needs the `mcp` extra: pip install 'paper-library[mcp]'
+    paper-fetch-mcp                      # needs the `mcp` extra: pip install 'paper-fetch[mcp]'
 
-Every tool is a thin wrapper over `paperlib.Library`; nothing here decides what counts as open,
+Every tool is a thin wrapper over `paper_fetch.Library`; nothing here decides what counts as open,
 what is stored, or what is held. Those rules stay in the library.
 
 ## The contract
@@ -17,7 +17,7 @@ Every tool returns one JSON envelope:
 `tool_error`: bad arguments or configuration (unparseable identifier, unknown provider, bad key).
 
 `add_local` is deliberately not a tool. It stores a copy on a declared rights statement, and that
-statement is the operator's to make, not a model's; use `paperlib add` for it.
+statement is the operator's to make, not a model's; use `paper-fetch add` for it.
 """
 
 from __future__ import annotations
@@ -72,7 +72,7 @@ ROW_KEYS = (
 TEXT_PAGE_MIN, TEXT_PAGE_MAX = 1000, 100_000
 
 mcp = _Server(
-    "paper-library",
+    "paper-fetch",
     instructions=(
         "A local library of legal open-access scientific papers. Call `library` first to see what "
         "is already held; `fetch` a DOI, OpenAlex id (W123), pmid:N or PMCID to add one (a held "
@@ -186,7 +186,7 @@ def status() -> dict[str, Any]:
 
 
 def main() -> int:
-    """Entry point for `paperlib-mcp`: serve the tools over stdio."""
+    """Entry point for `paper-fetch-mcp`: serve the tools over stdio."""
     load_env()
     mcp.run()
     return 0

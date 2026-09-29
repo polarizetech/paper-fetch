@@ -5,9 +5,9 @@ from __future__ import annotations
 import pytest
 
 from conftest import PDF, DeadHttp, FakeHttp, J, fixture
-from paperlib import OpenAlex
-from paperlib.http import Response
-from paperlib.providers import (
+from paper_fetch import OpenAlex
+from paper_fetch.http import Response
+from paper_fetch.providers import (
     DEFAULT_SEARCH,
     DOAJ,
     HAL,
@@ -23,7 +23,7 @@ from paperlib.providers import (
     clean_doi,
     describe,
 )
-from paperlib.providers.adapters import (
+from paper_fetch.providers.adapters import (
     PMCS3,
     Biorxiv,
     Core,
@@ -96,9 +96,9 @@ def test_build_rejects_an_unknown_purpose() -> None:
 
 
 def test_environment_sets_the_order(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PAPERLIB_PROVIDERS", "europepmc, pmc-s3")
+    monkeypatch.setenv("PAPER_FETCH_PROVIDERS", "europepmc, pmc-s3")
     assert [p.name for p in build(FakeHttp())] == ["europepmc", "pmc-s3"]
-    monkeypatch.setenv("PAPERLIB_SEARCH_PROVIDERS", "pubmed")
+    monkeypatch.setenv("PAPER_FETCH_SEARCH_PROVIDERS", "pubmed")
     assert [p.name for p in build(FakeHttp(), purpose="search")] == ["pubmed"]
 
 
@@ -110,7 +110,7 @@ def test_defaults_and_registry() -> None:
     d = {x["name"]: x for x in describe(FakeHttp())}
     assert set(d) == set(REGISTRY)
     assert d["unpaywall"]["available"] is False
-    assert d["unpaywall"]["why"] == "needs PAPERLIB_EMAIL"
+    assert d["unpaywall"]["why"] == "needs PAPER_FETCH_EMAIL"
     assert d["openalex"]["recommends"] == ["OPENALEX_API_KEY"]
 
 
@@ -204,10 +204,10 @@ def test_pubmed_search(monkeypatch: pytest.MonkeyPatch) -> None:
     assert h[0].year == 2013
     assert h[0].is_oa is True
     assert "free%20full%20text" in http.log[0]
-    assert "tool=paperlib" in http.log[0]
+    assert "tool=paper-fetch" in http.log[0]
     assert "email" not in http.log[0]
 
-    monkeypatch.setenv("PAPERLIB_EMAIL", "someone@example.org")
+    monkeypatch.setenv("PAPER_FETCH_EMAIL", "someone@example.org")
     monkeypatch.setenv("NCBI_API_KEY", "k")
     http2 = FakeHttp(routes)
     p = PubMed(http2)
@@ -313,8 +313,8 @@ def test_biorxiv_latest_version() -> None:
 
 def test_unpaywall_needs_an_email(monkeypatch: pytest.MonkeyPatch) -> None:
     http = FakeHttp({"api.unpaywall.org": J(fixture("unpaywall.json"))})
-    assert Unpaywall(http).available() == (False, "needs PAPERLIB_EMAIL")
-    monkeypatch.setenv("PAPERLIB_EMAIL", "someone@example.org")
+    assert Unpaywall(http).available() == (False, "needs PAPER_FETCH_EMAIL")
+    monkeypatch.setenv("PAPER_FETCH_EMAIL", "someone@example.org")
     locs = Unpaywall(http).locate({"doi": "10.5555/x"})
     assert [(x.url, x.license) for x in locs] == [("https://repo.example.org/a.pdf", "cc-by")]
     assert "email=someone%40example.org" in http.log[-1]

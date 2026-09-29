@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from conftest import PDF, DeadHttp, FakeHttp, J, fixture
-from paperlib import BadApiKey, NeedsApiKey, OpenAlex
-from paperlib.http import Response
-from paperlib.idconv import enrich
-from paperlib.ids import Ident
+from paper_fetch import BadApiKey, NeedsApiKey, OpenAlex
+from paper_fetch.http import Response
+from paper_fetch.idconv import enrich
+from paper_fetch.ids import Ident
 
 # ---------------------------------------------------------------------------------- OpenAlex
 
@@ -93,7 +93,7 @@ def test_content_needs_a_key() -> None:
 
 def test_environment_supplies_key_and_email(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPENALEX_API_KEY", "envkey")
-    monkeypatch.setenv("PAPERLIB_EMAIL", "someone@example.org")
+    monkeypatch.setenv("PAPER_FETCH_EMAIL", "someone@example.org")
     oa = OpenAlex(http=FakeHttp())
     assert (oa.api_key, oa.email) == ("envkey", "someone@example.org")
 
@@ -102,7 +102,7 @@ def test_environment_supplies_key_and_email(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_idconv_fills_missing_identifiers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PAPERLIB_EMAIL", "someone@example.org")
+    monkeypatch.setenv("PAPER_FETCH_EMAIL", "someone@example.org")
     http = FakeHttp({"idconv": J(fixture("idconv.json"))})
     ids, note = enrich({"doi": "10.5555/example.001", "pmid": None, "pmcid": None}, http)
     assert (ids["pmcid"], ids["pmid"]) == ("PMC3333333", "33333333")

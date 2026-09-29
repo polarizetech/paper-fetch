@@ -20,7 +20,7 @@ and the record says so. Nothing is ever keyed by a provider's private ID.
 ## Providers are swappable
 
 `Library(store, oa, providers=[...], search_providers=[...])`, or by name through
-`PAPERLIB_PROVIDERS` / `PAPERLIB_SEARCH_PROVIDERS`. See `providers/__init__.py`.
+`PAPER_FETCH_PROVIDERS` / `PAPER_FETCH_SEARCH_PROVIDERS`. See `providers/__init__.py`.
 
 A failed retrieval is remembered with a `retry_after`: open-access status changes (embargoes lift,
 preprints get deposited), but without a delay every lookup of a closed paper re-asks every provider.
@@ -139,7 +139,7 @@ class Library:
 
     @classmethod
     def default(cls) -> Library:
-        """The store named by PAPERLIB_STORE (a local directory by default) and live providers."""
+        """The store named by PAPER_FETCH_STORE (local by default) and live providers."""
         return cls(store_from_env(), OpenAlex())
 
     @property
@@ -442,7 +442,8 @@ class Library:
         **Web fallback.** When the providers above return no open-access hit, the `web` provider
         (SearXNG, opt-in) is asked too, and its report says why it ran. It is skipped, and
         reported `not-needed`, when an open hit already exists. Naming `web` in `providers` runs
-        it unconditionally; `web_fallback=False` or PAPERLIB_WEB_FALLBACK=0 disables the fallback.
+        it unconditionally; `web_fallback=False` or PAPER_FETCH_WEB_FALLBACK=0 disables the
+        fallback.
         """
         provs = (
             build(self.http, openalex_client=self.oa, names=providers, purpose="search")
@@ -457,7 +458,7 @@ class Library:
             )
 
         if web_fallback is None:
-            web_fallback = os.environ.get("PAPERLIB_WEB_FALLBACK", "1") != "0"
+            web_fallback = os.environ.get("PAPER_FETCH_WEB_FALLBACK", "1") != "0"
         if FALLBACK_SEARCH not in report:
             if not web_fallback:
                 report[FALLBACK_SEARCH] = {"status": "skipped", "why": "web fallback disabled"}

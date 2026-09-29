@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from paperlib.ids import Ident, doi_key, normalize, pmcid_from_openalex
+from paper_fetch.ids import Ident, doi_key, normalize, pmcid_from_openalex
 
 
 @pytest.mark.parametrize(

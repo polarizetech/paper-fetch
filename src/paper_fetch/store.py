@@ -2,13 +2,13 @@
 
 ## Backends
 
-- `LocalStore` (the default): a directory on disk, `PAPERLIB_DATA_DIR` or
-  `~/.local/share/paperlib` (`$XDG_DATA_HOME/paperlib` when that is set).
+- `LocalStore` (the default): a directory on disk, `PAPER_FETCH_DATA_DIR` or
+  `~/.local/share/paper-fetch` (`$XDG_DATA_HOME/paper-fetch` when that is set).
 - `S3Store`: any S3-compatible bucket (AWS S3, DigitalOcean Spaces, MinIO, Cloudflare R2, ...),
-  configured by `PAPERLIB_S3_*` environment variables. Needs the `s3` extra (boto3).
+  configured by `PAPER_FETCH_S3_*` environment variables. Needs the `s3` extra (boto3).
 - `MemoryStore`: for tests.
 
-Choose with `PAPERLIB_STORE=local|s3|memory`; see `store_from_env`.
+Choose with `PAPER_FETCH_STORE=local|s3|memory`; see `store_from_env`.
 
 ## Private, and asserted from outside
 
@@ -63,7 +63,7 @@ __all__ = [
 ]
 
 PREFIX = "papers/"
-_TMP = ".paperlib-tmp-"
+_TMP = ".paper-fetch-tmp-"
 
 
 class NotPrivate(RuntimeError):
@@ -93,13 +93,13 @@ def _xdg(var: str, fallback: str) -> Path:
 
 
 def default_data_dir() -> Path:
-    env = os.environ.get("PAPERLIB_DATA_DIR")
-    return Path(env).expanduser() if env else _xdg("XDG_DATA_HOME", ".local/share") / "paperlib"
+    env = os.environ.get("PAPER_FETCH_DATA_DIR")
+    return Path(env).expanduser() if env else _xdg("XDG_DATA_HOME", ".local/share") / "paper-fetch"
 
 
 def default_cache_dir() -> Path:
-    env = os.environ.get("PAPERLIB_CACHE")
-    return Path(env).expanduser() if env else _xdg("XDG_CACHE_HOME", ".cache") / "paperlib"
+    env = os.environ.get("PAPER_FETCH_CACHE")
+    return Path(env).expanduser() if env else _xdg("XDG_CACHE_HOME", ".cache") / "paper-fetch"
 
 
 def _mkdir_private(path: Path) -> None:
@@ -229,8 +229,8 @@ class LocalStore:
 class S3Store:
     """Any S3-compatible bucket, with a local read-through cache.
 
-    Reads go through `PAPERLIB_CACHE` (default `~/.cache/paperlib`); without it every read is a
-    round trip and, on most providers, an egress charge.
+    Reads go through `PAPER_FETCH_CACHE` (default `~/.cache/paper-fetch`); without it every read is
+    a round trip and, on most providers, an egress charge.
     """
 
     def __init__(
@@ -255,7 +255,7 @@ class S3Store:
                 import boto3  # noqa: PLC0415 -- optional dependency
                 from botocore.config import Config  # noqa: PLC0415
             except ImportError as e:  # pragma: no cover -- depends on the environment
-                raise ImportError("S3Store needs boto3: pip install 'paper-library[s3]'") from e
+                raise ImportError("S3Store needs boto3: pip install 'paper-fetch[s3]'") from e
             client = boto3.client(
                 "s3",
                 region_name=region,
@@ -268,22 +268,23 @@ class S3Store:
 
     @classmethod
     def from_env(cls) -> S3Store:
-        """PAPERLIB_S3_BUCKET (required), _ENDPOINT_URL, _REGION, _ACCESS_KEY_ID,
+        """PAPER_FETCH_S3_BUCKET (required), _ENDPOINT_URL, _REGION, _ACCESS_KEY_ID,
         _SECRET_ACCESS_KEY, _PUBLIC_URL. Unset credentials fall back to boto3's own chain."""
         env = os.environ
-        bucket = env.get("PAPERLIB_S3_BUCKET")
+        bucket = env.get("PAPER_FETCH_S3_BUCKET")
         if not bucket:
             raise RuntimeError(
-                "PAPERLIB_STORE=s3 needs PAPERLIB_S3_BUCKET (and usually PAPERLIB_S3_ENDPOINT_URL, "
-                "PAPERLIB_S3_REGION, PAPERLIB_S3_ACCESS_KEY_ID, PAPERLIB_S3_SECRET_ACCESS_KEY)."
+                "PAPER_FETCH_STORE=s3 needs PAPER_FETCH_S3_BUCKET (and usually "
+                "PAPER_FETCH_S3_ENDPOINT_URL, PAPER_FETCH_S3_REGION, PAPER_FETCH_S3_ACCESS_KEY_ID, "
+                "PAPER_FETCH_S3_SECRET_ACCESS_KEY)."
             )
         return cls(
             bucket,
-            endpoint_url=env.get("PAPERLIB_S3_ENDPOINT_URL") or None,
-            region=env.get("PAPERLIB_S3_REGION") or None,
-            access_key_id=env.get("PAPERLIB_S3_ACCESS_KEY_ID") or None,
-            secret_access_key=env.get("PAPERLIB_S3_SECRET_ACCESS_KEY") or None,
-            public_url=env.get("PAPERLIB_S3_PUBLIC_URL") or None,
+            endpoint_url=env.get("PAPER_FETCH_S3_ENDPOINT_URL") or None,
+            region=env.get("PAPER_FETCH_S3_REGION") or None,
+            access_key_id=env.get("PAPER_FETCH_S3_ACCESS_KEY_ID") or None,
+            secret_access_key=env.get("PAPER_FETCH_S3_SECRET_ACCESS_KEY") or None,
+            public_url=env.get("PAPER_FETCH_S3_PUBLIC_URL") or None,
         )
 
     def _virtual_host_url(self) -> str:
@@ -362,12 +363,12 @@ class S3Store:
 
 
 def store_from_env() -> Store:
-    """The store named by PAPERLIB_STORE: 'local' (default), 's3', or 'memory'."""
-    kind = (os.environ.get("PAPERLIB_STORE") or "local").strip().lower()
+    """The store named by PAPER_FETCH_STORE: 'local' (default), 's3', or 'memory'."""
+    kind = (os.environ.get("PAPER_FETCH_STORE") or "local").strip().lower()
     if kind == "local":
         return LocalStore()
     if kind == "s3":
         return S3Store.from_env()
     if kind == "memory":
         return MemoryStore()
-    raise ValueError(f"PAPERLIB_STORE={kind!r}; expected 'local', 's3' or 'memory'")
+    raise ValueError(f"PAPER_FETCH_STORE={kind!r}; expected 'local', 's3' or 'memory'")

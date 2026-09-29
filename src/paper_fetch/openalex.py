@@ -18,7 +18,7 @@
   unauthenticated calls would hide a misconfiguration behind a working-looking tool.
 
 The key is read from `OPENALEX_API_KEY`. A contact email for the polite pool is sent **only** if
-`PAPERLIB_EMAIL` is set; nothing here carries a default address.
+`PAPER_FETCH_EMAIL` is set; nothing here carries a default address.
 """
 
 from __future__ import annotations
@@ -77,7 +77,7 @@ class OpenAlex:
     ) -> None:
         self.http: HttpClient = http or Http()
         self.api_key = api_key if api_key is not None else os.environ.get("OPENALEX_API_KEY")
-        self.email = email if email is not None else os.environ.get("PAPERLIB_EMAIL")
+        self.email = email if email is not None else os.environ.get("PAPER_FETCH_EMAIL")
         self.usage = Usage()
         self.spent_usd = 0.0
 

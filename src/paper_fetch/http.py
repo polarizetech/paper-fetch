@@ -20,11 +20,12 @@ __all__ = ["Http", "HttpClient", "Response", "user_agent"]
 
 
 def user_agent() -> str:
-    """`paperlib/<version>`, plus a mailto when PAPERLIB_EMAIL is set (several APIs ask for one)."""
+    """`paper-fetch/<version>`, plus a mailto when PAPER_FETCH_EMAIL is set (several APIs ask for
+    one)."""
     from . import __version__  # noqa: PLC0415 -- avoids an import cycle with the package root
 
-    email = os.environ.get("PAPERLIB_EMAIL")
-    return f"paperlib/{__version__}" + (f" (mailto:{email})" if email else "")
+    email = os.environ.get("PAPER_FETCH_EMAIL")
+    return f"paper-fetch/{__version__}" + (f" (mailto:{email})" if email else "")
 
 
 @dataclass

@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 from conftest import FakeHttp, J, fixture, make_library
-from paperlib import CitationsUnavailable, Library, NotFound
-from paperlib.citations import OpenCitations, parse_pids
-from paperlib.http import Response
+from paper_fetch import CitationsUnavailable, Library, NotFound
+from paper_fetch.citations import OpenCitations, parse_pids
+from paper_fetch.http import Response
 
 
 def test_parse_pids() -> None:

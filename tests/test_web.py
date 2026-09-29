@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 
 from conftest import FakeHttp, J, fixture
-from paperlib.http import Response
-from paperlib.providers import ProviderUnavailable, WebSearch
-from paperlib.providers.web import parse_ids
+from paper_fetch.http import Response
+from paper_fetch.providers import ProviderUnavailable, WebSearch
+from paper_fetch.providers.web import parse_ids
 
 
 @pytest.mark.parametrize(

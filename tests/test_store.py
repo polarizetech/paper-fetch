@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from paperlib.store import (
+from paper_fetch.store import (
     LocalStore,
     MemoryStore,
     NotPrivate,
@@ -73,7 +73,7 @@ def test_local_store_writes_private_files_and_directories(tmp_path: Path) -> Non
     assert stat.S_IMODE(f.stat().st_mode) == 0o600
     for d in (f.parent, f.parent.parent, f.parent.parent.parent, tmp_path / "lib"):
         assert stat.S_IMODE(d.stat().st_mode) == 0o700, d
-    assert not [p for p in f.parent.iterdir() if p.name.startswith(".paperlib-tmp-")]
+    assert not [p for p in f.parent.iterdir() if p.name.startswith(".paper-fetch-tmp-")]
     s.assert_private("papers/works/W1/fulltext.pdf")
 
 
@@ -93,12 +93,12 @@ def test_local_store_default_directory(tmp_path: Path) -> None:
 
 def test_store_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert isinstance(store_from_env(), LocalStore)
-    monkeypatch.setenv("PAPERLIB_STORE", "memory")
+    monkeypatch.setenv("PAPER_FETCH_STORE", "memory")
     assert isinstance(store_from_env(), MemoryStore)
-    monkeypatch.setenv("PAPERLIB_STORE", "s3")
-    with pytest.raises(RuntimeError, match="PAPERLIB_S3_BUCKET"):
+    monkeypatch.setenv("PAPER_FETCH_STORE", "s3")
+    with pytest.raises(RuntimeError, match="PAPER_FETCH_S3_BUCKET"):
         store_from_env()
-    monkeypatch.setenv("PAPERLIB_STORE", "ftp")
+    monkeypatch.setenv("PAPER_FETCH_STORE", "ftp")
     with pytest.raises(ValueError, match="expected"):
         store_from_env()
 
@@ -240,9 +240,9 @@ def test_s3_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         captured.update(kw, bucket=bucket)
 
     monkeypatch.setattr(S3Store, "__init__", fake_init)
-    monkeypatch.setenv("PAPERLIB_S3_BUCKET", "b")
-    monkeypatch.setenv("PAPERLIB_S3_ENDPOINT_URL", "https://s3.example")
-    monkeypatch.setenv("PAPERLIB_S3_ACCESS_KEY_ID", "id")
+    monkeypatch.setenv("PAPER_FETCH_S3_BUCKET", "b")
+    monkeypatch.setenv("PAPER_FETCH_S3_ENDPOINT_URL", "https://s3.example")
+    monkeypatch.setenv("PAPER_FETCH_S3_ACCESS_KEY_ID", "id")
     S3Store.from_env()
     assert captured["bucket"] == "b"
     assert captured["endpoint_url"] == "https://s3.example"

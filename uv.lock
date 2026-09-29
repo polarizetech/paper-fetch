@@ -528,7 +528,7 @@ wheels = [
 ]
 
 [[package]]
-name = "paper-library"
+name = "paper-fetch"
 source = { editable = "." }
 dependencies = [
     { name = "pypdf" },

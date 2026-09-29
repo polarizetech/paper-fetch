@@ -1,6 +1,6 @@
 """The MCP tool contract: names, arguments, and the {"ok", "data" | "code", "error"} envelope.
 
-Tools are plain functions, called directly here; one test also drives the real `paperlib-mcp`
+Tools are plain functions, called directly here; one test also drives the real `paper-fetch-mcp`
 entry point over stdio, as an MCP client would.
 """
 
@@ -17,9 +17,9 @@ import anyio
 import pytest
 
 from conftest import FakeProvider, J, fixture, make_library
-from paperlib import Library, NotFound
-from paperlib import mcp_server as srv
-from paperlib.providers import Hit, ProviderUnavailable
+from paper_fetch import Library, NotFound
+from paper_fetch import mcp_server as srv
+from paper_fetch.providers import Hit, ProviderUnavailable
 
 DOI = "10.5555/example.001"
 ENVELOPE_CODES = {"not_found", "unavailable", "tool_error"}
@@ -152,7 +152,7 @@ def test_providers_and_status(lib: Library) -> None:
 
 
 def test_lazy_default_library(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PAPERLIB_STORE", "memory")
+    monkeypatch.setenv("PAPER_FETCH_STORE", "memory")
     srv._library = None
     try:
         assert srv.library()["data"]["n"] == 0
@@ -172,11 +172,13 @@ def test_stdio_server_speaks_the_contract(tmp_path: Path) -> None:
     env = {
         k: v
         for k, v in os.environ.items()
-        if not k.startswith(("PAPERLIB_", "OPENALEX", "OPENCITATIONS", "SEARXNG"))
+        if not k.startswith(("PAPER_FETCH_", "OPENALEX", "OPENCITATIONS", "SEARXNG"))
     }
-    env.update(PAPERLIB_STORE="memory", PAPERLIB_ENV_DIR=str(tmp_path / "none"))
+    env.update(PAPER_FETCH_STORE="memory", PAPER_FETCH_ENV_DIR=str(tmp_path / "none"))
     params = StdioServerParameters(
-        command=sys.executable, args=["-c", "from paperlib.mcp_server import main; main()"], env=env
+        command=sys.executable,
+        args=["-c", "from paper_fetch.mcp_server import main; main()"],
+        env=env,
     )
 
     async def session() -> dict[str, Any]:

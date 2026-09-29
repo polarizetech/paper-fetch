@@ -10,7 +10,7 @@
   Data: XML, text and PDF, each with an md5.
 - `core`: search and locate (repository PDFs). Optional `CORE_API_KEY`. No licence field.
 - `biorxiv`: locate only (the API has no keyword search): JATS XML and licence by DOI.
-- `unpaywall`: locate only, best OA PDF by DOI. Needs `PAPERLIB_EMAIL` (Unpaywall requires it).
+- `unpaywall`: locate only, best OA PDF by DOI. Needs `PAPER_FETCH_EMAIL` (Unpaywall requires it).
 
 **Deliberately absent:**
 - **Google Scholar**: no API, and its terms forbid automated querying. OpenAlex, OpenAIRE and
@@ -209,9 +209,9 @@ class PubMed(Provider):
 
     @staticmethod
     def _p() -> str:
-        p = {"tool": "paperlib"}
-        if os.environ.get("PAPERLIB_EMAIL"):
-            p["email"] = os.environ["PAPERLIB_EMAIL"]
+        p = {"tool": "paper-fetch"}
+        if os.environ.get("PAPER_FETCH_EMAIL"):
+            p["email"] = os.environ["PAPER_FETCH_EMAIL"]
         if os.environ.get("NCBI_API_KEY"):
             p["api_key"] = os.environ["NCBI_API_KEY"]
         return urllib.parse.urlencode(p)
@@ -415,14 +415,14 @@ class Biorxiv(Provider):
 class Unpaywall(Provider):
     name, label = "unpaywall", "Unpaywall"
     can_locate = True
-    needs = ("PAPERLIB_EMAIL",)
+    needs = ("PAPER_FETCH_EMAIL",)
     min_interval_s = 0.1
     terms = "Free; requires a contact email on every request."
 
     def locate(self, ids: Ids) -> list[Location]:
         if not ids.get("doi"):
             return []
-        email = _Q(os.environ["PAPERLIB_EMAIL"])
+        email = _Q(os.environ["PAPER_FETCH_EMAIL"])
         r = self._get(f"https://api.unpaywall.org/v2/{_Q(ids['doi'])}?email={email}")
         if r.status != 200:
             return []

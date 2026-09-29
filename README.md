@@ -1,4 +1,4 @@
-# paper-library (`paperlib`)
+# paper-fetch
 
 A deduplicated, private library of **legal open-access** scientific papers. Give it a DOI, OpenAlex
 ID, PMID, PMCID or arXiv ID; it looks in what it already holds first, and only then asks a chain
@@ -6,14 +6,14 @@ of open-access providers for a copy. Every copy it keeps is validated (checksum,
 text) and stored with a provenance record: where it came from, under what licence, and every
 route that was tried.
 
-It ships as a Python library, a command line (`paperlib`), and an MCP server (`paperlib-mcp`) so
+It ships as a Python library, a command line (`paper-fetch`), and an MCP server (`paper-fetch-mcp`) so
 that an LLM agent can search, fetch and read papers through a small, stable tool contract.
 
 ```console
-$ paperlib fetch 10.1371/journal.pcbi.1003285
+$ paper-fetch fetch 10.1371/journal.pcbi.1003285
 ✓ W2036318837  [retrieved]  2013  Ten Simple Rules for Reproducible Computational Research
     oa=gold  route=pmc-s3:jats-xml  format=jats-xml  license=CC BY
-$ paperlib fetch 10.1371/journal.pcbi.1003285       # second time: no network at all
+$ paper-fetch fetch 10.1371/journal.pcbi.1003285       # second time: no network at all
 ✓ W2036318837  [library]  2013  Ten Simple Rules for Reproducible Computational Research
 ```
 
@@ -30,7 +30,7 @@ $ paperlib fetch 10.1371/journal.pcbi.1003285       # second time: no network at
   ACL and are checked with an anonymous request), and each copy records the licence exactly as its
   provider reported it. Quote briefly and cite; do not redistribute stored files.
 - **A copy you legitimately hold** (an author copy, a purchased PDF) can be added with
-  `paperlib add file.pdf <id> --rights "..."`. The rights statement is required and recorded. This
+  `paper-fetch add file.pdf <id> --rights "..."`. The rights statement is required and recorded. This
   is deliberately not an MCP tool: that statement is the operator's to make, not a model's.
 - **Validated, not assumed.** A candidate is refused if its md5 does not match the provider's
   published checksum, if it is an HTML page (a login screen served as "PDF"), if it is not the
@@ -44,10 +44,10 @@ $ paperlib fetch 10.1371/journal.pcbi.1003285       # second time: no network at
 Python 3.11+.
 
 ```bash
-pip install "paper-library[mcp]"          # CLI + MCP server
-pip install "paper-library[mcp,s3]"       # ... plus the S3-compatible store (boto3)
+pip install "paper-fetch[mcp]"          # CLI + MCP server
+pip install "paper-fetch[mcp,s3]"       # ... plus the S3-compatible store (boto3)
 # or, from a checkout:
-uv sync && uv run paperlib --help
+uv sync && uv run paper-fetch --help
 ```
 
 The core depends only on the standard library and [`pypdf`](https://pypi.org/project/pypdf/)
@@ -56,29 +56,29 @@ needed only for the server, `boto3` only for the S3 store.
 
 ## Configure
 
-Everything is configured with environment variables; none is required. Both `paperlib` and
-`paperlib-mcp` also read `KEY=value` lines from `*.env` files in `~/.config/paperlib/` (or
-`$PAPERLIB_ENV_DIR`), taking only the variables below and never overriding the environment. Keep
+Everything is configured with environment variables; none is required. Both `paper-fetch` and
+`paper-fetch-mcp` also read `KEY=value` lines from `*.env` files in `~/.config/paper-fetch/` (or
+`$PAPER_FETCH_ENV_DIR`), taking only the variables below and never overriding the environment. Keep
 those files out of repositories (`chmod 600`).
 
 | Variable | Purpose |
 |---|---|
-| `PAPERLIB_EMAIL` | Contact email. Sent to OpenAlex (polite pool), NCBI and PubMed, and in the User-Agent. **Required by Unpaywall**; without it the `unpaywall` route is skipped. Never sent unless set. |
+| `PAPER_FETCH_EMAIL` | Contact email. Sent to OpenAlex (polite pool), NCBI and PubMed, and in the User-Agent. **Required by Unpaywall**; without it the `unpaywall` route is skipped. Never sent unless set. |
 | `OPENALEX_API_KEY` | Optional ([free](https://openalex.org/users)). Raises limits and enables OpenAlex's own cached full texts. A *wrong* key fails loudly rather than silently degrading. |
 | `OPENCITATIONS_ACCESS_TOKEN` | Optional; OpenCitations asks applications to send one. |
 | `NCBI_API_KEY` | Optional; raises PubMed from 3 to 10 requests/s. |
 | `CORE_API_KEY` | Optional; raises CORE's limits. |
 | `SEARXNG_URL` | Optional. A SearXNG instance with JSON output enabled, used as a last-resort *search* fallback (never a download source). |
-| `PAPERLIB_PROVIDERS` | Comma-separated locate order (default below). |
-| `PAPERLIB_SEARCH_PROVIDERS` | Comma-separated federated-search set (default below). |
-| `PAPERLIB_WEB_FALLBACK` | `0` disables the web fallback. |
-| `PAPERLIB_STORE` | `local` (default), `s3` or `memory`. |
-| `PAPERLIB_DATA_DIR` | Local store directory. Default `~/.local/share/paperlib` (`$XDG_DATA_HOME/paperlib`). |
-| `PAPERLIB_CACHE` | Read-through cache for the S3 store. Default `~/.cache/paperlib`. |
-| `PAPERLIB_S3_BUCKET` | S3 store: bucket (required when `PAPERLIB_STORE=s3`). |
-| `PAPERLIB_S3_ENDPOINT_URL`, `PAPERLIB_S3_REGION` | S3 store: endpoint for non-AWS services (DigitalOcean Spaces, MinIO, R2, ...) and region. |
-| `PAPERLIB_S3_ACCESS_KEY_ID`, `PAPERLIB_S3_SECRET_ACCESS_KEY` | S3 store credentials; if unset, boto3's usual credential chain applies. |
-| `PAPERLIB_S3_PUBLIC_URL` | S3 store: the anonymous base URL used to prove objects are *not* public. Default `https://<bucket>.<endpoint host>`. |
+| `PAPER_FETCH_PROVIDERS` | Comma-separated locate order (default below). |
+| `PAPER_FETCH_SEARCH_PROVIDERS` | Comma-separated federated-search set (default below). |
+| `PAPER_FETCH_WEB_FALLBACK` | `0` disables the web fallback. |
+| `PAPER_FETCH_STORE` | `local` (default), `s3` or `memory`. |
+| `PAPER_FETCH_DATA_DIR` | Local store directory. Default `~/.local/share/paper-fetch` (`$XDG_DATA_HOME/paper-fetch`). |
+| `PAPER_FETCH_CACHE` | Read-through cache for the S3 store. Default `~/.cache/paper-fetch`. |
+| `PAPER_FETCH_S3_BUCKET` | S3 store: bucket (required when `PAPER_FETCH_STORE=s3`). |
+| `PAPER_FETCH_S3_ENDPOINT_URL`, `PAPER_FETCH_S3_REGION` | S3 store: endpoint for non-AWS services (DigitalOcean Spaces, MinIO, R2, ...) and region. |
+| `PAPER_FETCH_S3_ACCESS_KEY_ID`, `PAPER_FETCH_S3_SECRET_ACCESS_KEY` | S3 store credentials; if unset, boto3's usual credential chain applies. |
+| `PAPER_FETCH_S3_PUBLIC_URL` | S3 store: the anonymous base URL used to prove objects are *not* public. Default `https://<bucket>.<endpoint host>`. |
 
 ## Providers
 
@@ -93,7 +93,7 @@ those files out of repositories (`chmod 600`).
 | `hal` | yes | yes | Licence recorded verbatim (HAL's deposit authorisation is not a reuse licence). |
 | `osf` | yes | yes | OSF preprints via SHARE; only Creative Commons copies. |
 | `core` | yes | yes | Repository copies; CORE reports no licence, and none is claimed. |
-| `unpaywall` | | yes | Needs `PAPERLIB_EMAIL`. |
+| `unpaywall` | | yes | Needs `PAPER_FETCH_EMAIL`. |
 | `pubmed` | yes | | Finds papers and PMCIDs; PMC routes hold the copies. |
 | `doaj` | yes | | Search only (its full-text links are landing pages). |
 | `web` | fallback | | SearXNG; identifiers are parsed from URLs and never trusted as open. |
@@ -102,30 +102,30 @@ Default locate order: `pmc-s3, europepmc, plos, openalex, biorxiv, openaire, hal
 unpaywall`. Default search set: `openalex, europepmc, pubmed, openaire, plos, osf, hal, doaj,
 core`, with `web` asked only when none of those returns an open-access hit. NCBI's ID converter
 fills in missing PMCIDs/PMIDs before providers are asked, and OpenCitations answers the citation
-graph. `paperlib providers` lists what is enabled and what each needs, without touching the network.
+graph. `paper-fetch providers` lists what is enabled and what each needs, without touching the network.
 
 ## Command line
 
 ```text
-paperlib fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] [--force]
-paperlib search "<query>" [--providers a,b] [--include-closed] [-n N] [--refresh]
-paperlib providers
-paperlib library ["<query>"] [--full-text]
-paperlib text <id>
-paperlib provenance <id>
-paperlib verify <id>                # re-hash stored files against their recorded sha256
-paperlib add <file.pdf> <id> --rights "..."
-paperlib citations <id> [--references] [-n N] [--refresh]
-paperlib status | rebuild-index | adopt-orphans
+paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] [--force]
+paper-fetch search "<query>" [--providers a,b] [--include-closed] [-n N] [--refresh]
+paper-fetch providers
+paper-fetch library ["<query>"] [--full-text]
+paper-fetch text <id>
+paper-fetch provenance <id>
+paper-fetch verify <id>                # re-hash stored files against their recorded sha256
+paper-fetch add <file.pdf> <id> --rights "..."
+paper-fetch citations <id> [--references] [-n N] [--refresh]
+paper-fetch status | rebuild-index | adopt-orphans
 ```
 
-`python -m paperlib` is the same program. Exit codes: `1` not found, `2` unavailable or bad input,
+`python -m paper_fetch` is the same program. Exit codes: `1` not found, `2` unavailable or bad input,
 `3` checksum verification failed.
 
 ## Python
 
 ```python
-from paperlib import Library
+from paper_fetch import Library
 
 lib = Library.default()
 rec = lib.fetch("10.1371/journal.pcbi.1003285")  # rec["from"]: library | retrieved | not-obtainable
@@ -139,17 +139,17 @@ res = lib.search("reproducible computational research")
 
 ## MCP server
 
-`paperlib-mcp` is a stdio MCP server (works with `mcp` 1.x and 2.x). Any MCP client can run it:
+`paper-fetch-mcp` is a stdio MCP server (works with `mcp` 1.x and 2.x). Any MCP client can run it:
 
 ```json
 {
   "mcpServers": {
     "papers": {
-      "command": "paperlib-mcp",
+      "command": "paper-fetch-mcp",
       "args": [],
       "env": {
-        "PAPERLIB_EMAIL": "you@example.org",
-        "PAPERLIB_DATA_DIR": "/path/to/paper-library"
+        "PAPER_FETCH_EMAIL": "you@example.org",
+        "PAPER_FETCH_DATA_DIR": "/path/to/paper-fetch"
       }
     }
   }
@@ -157,8 +157,8 @@ res = lib.search("reproducible computational research")
 ```
 
 Without a global install, use `uvx`: `"command": "uvx", "args": ["--from",
-"paper-library[mcp] @ git+https://github.com/polarizetech/paper-library", "paperlib-mcp"]`.
-Secrets can stay out of client configuration by putting them in `~/.config/paperlib/*.env`.
+"paper-fetch[mcp] @ git+https://github.com/polarizetech/paper-fetch", "paper-fetch-mcp"]`.
+Secrets can stay out of client configuration by putting them in `~/.config/paper-fetch/*.env`.
 
 ### Tool contract
 
@@ -214,7 +214,7 @@ asked about again), `is_retracted`; `fetch` adds `from` (`library` | `retrieved`
 ## Storage layout
 
 ```text
-papers/index.jsonl                     catalogue (derived; `paperlib rebuild-index` recreates it)
+papers/index.jsonl                     catalogue (derived; `paper-fetch rebuild-index` recreates it)
 papers/doi/<quoted-doi>.json           DOI -> work pointer
 papers/works/<work>/work.json          the OpenAlex record
 papers/works/<work>/provenance.json    authoritative: routes tried, source, licence, sha256s
@@ -251,7 +251,7 @@ uv run pytest --cov
 ```
 
 The suite is offline: HTTP is replaced by a fake that serves small synthetic fixtures
-(`tests/fixtures/`), and one test drives the real `paperlib-mcp` entry point over stdio. CI runs
+(`tests/fixtures/`), and one test drives the real `paper-fetch-mcp` entry point over stdio. CI runs
 all of the above on Python 3.11, 3.12 and 3.13.
 
 ## License

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-SRC = Path(__file__).resolve().parents[1] / "src" / "paperlib"
+SRC = Path(__file__).resolve().parents[1] / "src" / "paper_fetch"
 FILES = {p.relative_to(SRC).as_posix(): p.read_text() for p in SRC.rglob("*.py")}
 
 

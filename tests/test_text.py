@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from conftest import FONT_TABLE, JATS, PDF, PROSE, TEI
-from paperlib.text import is_html, is_pdf, looks_like_prose, pdf_text, xml_text
+from paper_fetch.text import is_html, is_pdf, looks_like_prose, pdf_text, xml_text
 
 
 def test_prose_passes_the_gate() -> None:

@@ -1,7 +1,7 @@
 """Shared offline test doubles. Nothing in the suite opens a socket.
 
-`FakeHttp` replaces `paperlib.http.Http`: it serves canned `Response`s by URL substring and counts
-calls, which is how "a held paper is never downloaded again" is tested.
+`FakeHttp` replaces `paper_fetch.http.Http`: it serves canned `Response`s by URL substring and
+counts calls, which is how "a held paper is never downloaded again" is tested.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from typing import Any
 
 import pytest
 
-from paperlib import Library, MemoryStore, OpenAlex
-from paperlib.citations import OpenCitations
-from paperlib.http import Response
-from paperlib.providers import REGISTRY, Hit, Location, Provider
+from paper_fetch import Library, MemoryStore, OpenAlex
+from paper_fetch.citations import OpenCitations
+from paper_fetch.http import Response
+from paper_fetch.providers import REGISTRY, Hit, Location, Provider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -189,7 +189,7 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     import os  # noqa: PLC0415
 
     for key in list(os.environ):
-        if key.startswith("PAPERLIB_") or key in (
+        if key.startswith("PAPER_FETCH_") or key in (
             "OPENALEX_API_KEY",
             "OPENCITATIONS_ACCESS_TOKEN",
             "NCBI_API_KEY",
@@ -200,9 +200,9 @@ def _isolated(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
             "XDG_CONFIG_HOME",
         ):
             monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("PAPERLIB_ENV_DIR", str(tmp_path / "no-env"))
-    monkeypatch.setenv("PAPERLIB_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.setenv("PAPERLIB_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setenv("PAPER_FETCH_ENV_DIR", str(tmp_path / "no-env"))
+    monkeypatch.setenv("PAPER_FETCH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PAPER_FETCH_CACHE", str(tmp_path / "cache"))
     for cls in REGISTRY.values():
         monkeypatch.setattr(cls, "min_interval_s", 0.0)
     monkeypatch.setattr(OpenCitations, "min_interval_s", 0.0)
