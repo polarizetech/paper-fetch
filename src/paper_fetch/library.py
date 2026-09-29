@@ -50,6 +50,11 @@ from .text import is_pdf, looks_like_prose, pdf_text
 
 __all__ = ["INDEX", "Library", "NotFound", "Record"]
 
+
+def _canon(record: Record) -> str:
+    return json.dumps(record, sort_keys=True)
+
+
 #: A catalogue row: work, doi, pmid, pmcid, arxiv, title, year, authors, is_retracted, oa_status,
 #: full_text, format, license, route, retrieved, retry_after.
 Record = dict[str, Any]
@@ -135,6 +140,7 @@ class Library:
         self.retry_after_days = retry_after_days
         self.search_ttl_days = search_ttl_days
         self._index: dict[str, Record] | None = None
+        self._loaded: dict[str, str] = {}  # the catalogue as last read, to tell what we changed
         self.opencitations = OpenCitations(self.http)
 
     @classmethod
@@ -154,22 +160,46 @@ class Library:
 
     # -- catalogue ------------------------------------------------------------------------------
 
+    # The catalogue is one object that several processes (MCP servers, the CLI, other machines)
+    # read and rewrite. It is therefore always read from the store itself, never from a local
+    # cache, and a save writes only this process's changes onto the latest copy. Two saves in the
+    # same instant can still race; that window is the time between one read and one write.
+
     def index(self, refresh: bool = False) -> dict[str, Record]:
         if self._index is None or refresh:
-            self._index = {}
-            if refresh:
-                self.store.invalidate(INDEX)
-            if self.store.has(INDEX):
-                for line in self.store.get(INDEX).decode().splitlines():
-                    if line.strip():
-                        rec = json.loads(line)
-                        self._index[rec["work"]] = rec
+            self._index = self._read_catalogue()
+            self._loaded = {w: _canon(r) for w, r in self._index.items()}
         return self._index
 
-    def _save_index(self) -> None:
-        rows = sorted(self.index().values(), key=lambda r: r["work"])
-        body = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+    def _read_catalogue(self) -> dict[str, Record]:
+        self.store.invalidate(INDEX)
+        catalogue: dict[str, Record] = {}
+        if self.store.has(INDEX):
+            for line in self.store.get(INDEX).decode().splitlines():
+                if line.strip():
+                    rec = json.loads(line)
+                    catalogue[rec["work"]] = rec
+        return catalogue
+
+    def _save_index(self, *, replace: bool = False) -> None:
+        """Write this process's changes onto the latest catalogue; `replace` writes ours whole."""
+        mine = self.index()
+        if replace:
+            latest = dict(mine)
+        else:
+            changed = {w: r for w, r in mine.items() if self._loaded.get(w) != _canon(r)}
+            removed = self._loaded.keys() - mine.keys()
+            latest = self._read_catalogue()
+            for work in removed:
+                latest.pop(work, None)
+            latest.update(changed)
+        rows = sorted(latest.values(), key=lambda r: r["work"])
+        body = "".join(_canon(r) + "\n" for r in rows)
         self.store.put(INDEX, body.encode(), "application/x-ndjson")
+        # Update in place: callers may hold the dict index() returned.
+        mine.clear()
+        mine.update(latest)
+        self._loaded = {w: _canon(r) for w, r in latest.items()}
 
     def _by(self, field: str, value: str | None) -> Record | None:
         if not value:
@@ -735,7 +765,8 @@ class Library:
                 prov.setdefault("work", wid)
                 work = json.loads(self.store.get(f"{PREFIX}works/{wid}/work.json"))
                 self._index[wid] = self._row(work, prov)
-        self._save_index()
+        # The rebuilt catalogue is authoritative: rows without provenance objects must go.
+        self._save_index(replace=True)
         return len(self._index)
 
     def adopt_orphans(self) -> list[dict[str, Any]]:
