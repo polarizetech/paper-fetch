@@ -20,7 +20,9 @@ classifiers = [
     "Typing :: Typed",
 ]
 # The core is stdlib-only apart from pypdf, which is the only honest way to get text out of a PDF.
-dependencies = ["pypdf>=4.0"]
+# fontTools lets pypdf decode CFF (Type 1C) font encodings; without it pypdf warns on every such
+# font and may map some glyphs to the wrong characters.
+dependencies = ["pypdf>=4.0", "fonttools>=4.40"]
 
 [project.urls]
 Repository = "https://github.com/polarizetech/paper-fetch"
