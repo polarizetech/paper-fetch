@@ -261,3 +261,27 @@ def test_the_embedder_is_read_from_the_environment(monkeypatch: pytest.MonkeyPat
     assert model == "bge-m3"
     assert isinstance(e, OllamaEmbedder)
     assert e.url == "http://h:2"
+
+
+def test_relevance_by_embedding_and_by_concepts(tmp_path: Path) -> None:
+    lib = _library(tmp_path)
+    got = lib.relevance(["sleep and memory"], ["Sleep spindles and memory", "Heart rate in rowers"])
+    assert got["method"] == "embedding:fake"
+    first, second = got["scores"]
+    assert first > second
+    lexical, _ = make_library()
+    lexical.passages = PassageIndex(tmp_path / "lex.sqlite")
+    got = lexical.relevance(["sleep memory"], ["memory and sleep", "rowing"])
+    assert got == {"scores": [1.0, 0.0], "method": "concepts"}
+    assert lexical.relevance([], ["x"]) == {"scores": [0.0], "method": "none"}
+    srv._library = lexical
+    try:
+        assert srv.relevance(["sleep"], ["sleep"])["data"]["scores"] == [1.0]
+    finally:
+        srv._library = None
+
+
+def test_passages_carry_their_route(tmp_path: Path) -> None:
+    lib = _library(tmp_path)
+    paper = lib.paper_passages(DOI)["passages"][0]["paper"]
+    assert (paper["route"], paper["format"]) == ("good:pdf", "pdf")

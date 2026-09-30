@@ -502,9 +502,37 @@ class Library:
                 "license",
                 "text_sha256",
                 "hidden_chars",
+                "route",
+                "format",
             )
         }
         return row
+
+    def relevance(self, targets: Sequence[str], texts: Sequence[str]) -> dict[str, Any]:
+        """How close each text sits to the nearest target, 0..1: for deciding which search hits to
+        fetch first. Cosine similarity of embeddings when a model is configured, else the overlap
+        of concepts (content words, synonyms mapped to indexed terms)."""
+        if not targets or not texts:
+            return {"scores": [0.0] * len(texts), "method": "none"}
+        embed = self.passages.embed
+        if embed is not None:
+            np = self.passages._np  # the index owns the optional numpy import
+            vecs = np.asarray(embed([*targets, *texts]), dtype=np.float32)
+            vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
+            sims = vecs[len(targets) :] @ vecs[: len(targets)].T
+            return {
+                "scores": [round(float(r.max()), 4) for r in sims],
+                "method": f"embedding:{self.passages.model}",
+            }
+        vocab = self.memory.vocabulary
+        want = [concepts(t, vocab) for t in targets]
+        scores = []
+        for text in texts:
+            have = concepts(text, vocab)
+            scores.append(
+                round(max((len(have & w) / len(have | w) if have | w else 0.0) for w in want), 4)
+            )
+        return {"scores": scores, "method": "concepts"}
 
     def paper_passages(self, identifier: str, start: int = 0, limit: int = 4) -> dict[str, Any]:
         """A held paper's passages in order from position `start` (indexing it if needed)."""

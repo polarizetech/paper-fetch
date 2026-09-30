@@ -52,6 +52,7 @@ __all__ = [
     "provenance",
     "providers",
     "recall",
+    "relevance",
     "retrieve",
     "search",
     "status",
@@ -220,6 +221,14 @@ def retrieve(  # noqa: PLR0917 -- MCP clients pass every argument by name
             per_paper=per_paper or None,
         )
     )
+
+
+@mcp.tool()
+def relevance(targets: list[str], texts: list[str]) -> dict[str, Any]:
+    """Score each text (e.g. a search hit's title) by closeness to the nearest target (e.g. a
+    research sub-question), 0..1, to decide what to fetch first. Embedding similarity when an
+    embedding model is configured, else concept overlap; `method` says which."""
+    return _run(lambda: _lib().relevance(targets, texts))
 
 
 @mcp.tool()
