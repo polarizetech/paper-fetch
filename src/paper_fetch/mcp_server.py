@@ -43,13 +43,16 @@ __all__ = [
     "collections",
     "create_collection",
     "fetch",
+    "index",
     "library",
     "main",
     "mcp",
+    "passages",
     "profiles",
     "provenance",
     "providers",
     "recall",
+    "retrieve",
     "search",
     "status",
     "text",
@@ -88,7 +91,8 @@ mcp = _Server(
         "came from and under what licence. For work in a scientific field, pass a discipline "
         "`profile` (see `profiles`) to `search`; for a project, keep its papers in a named "
         "`collection`. Before searching, `recall` shows what earlier searches on the same concept "
-        "found. Open access is a right to read, not to republish."
+        "found. `retrieve` returns the passages of held papers that best answer a question, with "
+        "exact offsets, for quoting. Open access is a right to read, not to republish."
     ),
 )
 
@@ -183,6 +187,56 @@ def recall(
                 work=identifier or None,
                 limit=limit,
             )
+        }
+    )
+
+
+@mcp.tool()
+def retrieve(  # noqa: PLR0917 -- MCP clients pass every argument by name
+    query: str = "",
+    queries: list[str] | None = None,
+    identifiers: list[str] | None = None,
+    collection: str = "",
+    limit: int = 20,
+    per_paper: int = 0,
+) -> dict[str, Any]:
+    """The passages of held papers that best answer each query, best first.
+
+    Scope: the papers in `identifiers` and/or `collection` (indexed first if needed), else every
+    indexed paper. Give one `query` or several `queries` (one result list each). Each passage has a
+    stable `id` (<work>#p<ord>), `start`/`end` offsets into the paper's indexed text, its `text`,
+    ranks, and its paper (title, year, doi, is_retracted, hidden_chars, ...). `per_paper` caps
+    passages from one paper (0 = no cap).
+    """
+    qs = [*([query] if query else []), *(queries or [])]
+    if not qs:
+        return {"ok": False, "code": "tool_error", "error": "give a query or queries"}
+    return _run(
+        lambda: _lib().retrieve(
+            qs,
+            identifiers=identifiers or None,
+            collection=collection or None,
+            limit=limit,
+            per_paper=per_paper or None,
+        )
+    )
+
+
+@mcp.tool()
+def passages(identifier: str, start: int = 0, limit: int = 4) -> dict[str, Any]:
+    """A held paper's passages in order from position `start`: its opening, or the passage an id
+    `<work>#p<ord>` names (start=ord, limit=1). Same fields as `retrieve`."""
+    return _run(lambda: _lib().paper_passages(identifier, start, limit))
+
+
+@mcp.tool()
+def index(identifiers: list[str] | None = None, collection: str = "") -> dict[str, Any]:
+    """Put held full texts into the passage index (retrieve does this for its scope on demand).
+    With neither argument, every held full text. Returns what was indexed and what could not be."""
+    return _run(
+        lambda: {
+            **_lib().index_works(identifiers or None, collection=collection or None),
+            "index": _lib().passages.stats(),
         }
     )
 
