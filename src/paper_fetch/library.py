@@ -1322,4 +1322,5 @@ class Library:
             "collections": len(self.collections.names()),
             "searches_remembered": len(self.memory.entries()),
             "profiles": sorted(self.profiles()),
+            "passages": self.passages.stats(),
         }

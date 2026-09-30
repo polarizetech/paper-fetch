@@ -249,7 +249,7 @@ Every tool returns one JSON object:
 | `provenance` | `identifier: str` | the stored provenance record (below) |
 | `citations` | `identifier: str`, `direction: "citations" \| "references" = "citations"`, `limit: int = 25` | `{"of", "direction", "status", "n", "held", "source", "items": [...]}` |
 | `providers` | | `{"providers": [{"name", "label", "search", "locate", "needs", "recommends", "available", "why", "terms"}]}` |
-| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd", "collections", "searches_remembered", "profiles"}` |
+| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd", "collections", "searches_remembered", "profiles", "passages": {"papers", "passages", "with_vectors", "embedding_model", "path"}}` |
 
 **`search`**: `providers[name].status` is `ok` or `cache` (with `n`, `cost_usd`), `skipped`
 (missing configuration; `why`), `unavailable` or `error` (`why`), or for `web` also `not-needed`
