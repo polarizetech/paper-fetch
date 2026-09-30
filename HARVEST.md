@@ -33,8 +33,9 @@ curl -s "https://api.openalex.org/topics?search=reproducibility&per_page=8&selec
   | python3 -m json.tool | grep -E 'id|display_name|works_count'
 ```
 
-A topic is **broad** — one measured topic held 17,386 papers from the last two years alone. Expect to pair the topic with a keyword filter (`title_and_abstract.search:`)
-and to tell the operator both counts before fetching.
+A topic is **broad** — one measured topic held 17,386 papers from the last two years alone.
+Expect to pair the topic with a keyword filter (`title_and_abstract.search:`) and to tell the
+operator both counts before fetching.
 
 ## 2. Count and price the harvest BEFORE fetching (always)
 
@@ -117,8 +118,10 @@ For the same reason, PubMed is the better update source when the field is biomed
 
 ## If we build it
 
-The design discussed 2026-09-16, deliberately not built: a **collection** (topic definition in git,
-membership list in the store), a **harvest** step that pages each source by date window with a
+Built since: **collections** (a named member list in the store, with a discipline profile) and a
+**search memory** — `fetch --collection <name>` lists each harvested paper in the project, and
+`paper-fetch recall` shows what was already searched. The rest of the design discussed 2026-09-16
+is still not built: a **harvest** step that pages each source by date window with a
 trailing re-check, a **screening** step that keeps exclusions with reasons rather than dropping them
 silently, a **fetch queue** with a daily budget, and a **launchd job** with a per-run report. The
 two scale fixes above (batch the catalogue write, optional cache bypass) are prerequisites for it.

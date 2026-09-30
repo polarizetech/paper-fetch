@@ -1,0 +1,118 @@
+# The search half of the Cardiovascular science discipline. Evidence rules (study designs, grading,
+# critique) belong to the application that reads the papers, not here.
+slug = "cardiovascular"
+label = "Cardiovascular science"
+scope = "Cardiac, vascular and autonomic cardiovascular literature: mechanism, measurement, diagnosis and clinical outcome, from isolated tissue to randomised trials."
+search_guidance = """
+Write queries suited to PubMed/MEDLINE, Europe PMC and OpenAlex. Prefer the MeSH term for the condition and for the physiological measure, and name the specific index or endpoint (baroreflex sensitivity, RMSSD, ejection fraction, cardiovascular mortality) rather than the disease alone: a query for a disease returns its clinical literature and almost none of its physiology.
+"""
+examples = ["Does higher baroreflex sensitivity predict lower cardiovascular mortality?", "Does slow-paced breathing raise RMSSD in adults with hypertension?", "Is reduced heart rate variability a cause or a consequence of heart failure?"]
+
+[[anchors]]
+system = "mesh"
+label = "Cardiovascular Diseases"
+id = "D002318"
+tree = "C14"
+synonyms = ["cardiovascular disease", "major adverse cardiac events"]
+
+[[anchors]]
+system = "mesh"
+label = "Baroreflex"
+id = "D017704"
+tree = "G09.330.380.057"
+synonyms = ["baroreceptor reflex", "baroreflex sensitivity", "arterial baroreceptors"]
+
+[[anchors]]
+system = "mesh"
+label = "Respiratory Sinus Arrhythmia"
+id = "D065809"
+tree = "G09.330.380.500.715"
+synonyms = ["cardiorespiratory coupling", "vagal tone"]
+
+[[anchors]]
+system = "free-text"
+label = "heart rate variability"
+synonyms = ["HRV", "SDNN", "RMSSD", "pNN50", "LF/HF ratio", "R-R interval variability"]
+
+[[anchors]]
+system = "free-text"
+label = "autonomic nervous system"
+synonyms = ["sympathetic activity", "parasympathetic activity", "cardiac vagal control", "muscle sympathetic nerve activity", "MSNA"]
+
+[[anchors]]
+system = "free-text"
+label = "orthostatic intolerance"
+synonyms = ["postural orthostatic tachycardia syndrome", "POTS", "orthostatic hypotension", "head-up tilt test"]
+
+[[measures]]
+label = "Time-domain HRV and intervals"
+units = ["ms", "msec", "milliseconds"]
+
+[[measures]]
+label = "Frequency-domain HRV power"
+units = ["ms2", "ms²", "n.u.", "nu"]
+
+[[measures]]
+label = "Blood and filling pressures"
+units = ["mmHg", "kPa"]
+
+[[measures]]
+label = "Heart rate"
+units = ["bpm", "beats/min"]
+
+[[measures]]
+label = "Baroreflex sensitivity"
+units = ["ms/mmHg"]
+
+[[measures]]
+label = "Fractions and proportions"
+units = ["%", "percent"]
+
+[[sources]]
+key = "pubmed"
+label = "PubMed / MEDLINE"
+role = "literature"
+url = "https://pubmed.ncbi.nlm.nih.gov/"
+why = "MeSH-indexed; the C14 disease tree and the G09 circulatory physiology tree."
+
+[[sources]]
+key = "europepmc"
+label = "Europe PMC"
+role = "literature"
+url = "https://www.ebi.ac.uk/europepmc/webservices/rest/"
+why = "Open-access full text plus MeSH terms in one record."
+
+[[sources]]
+key = "openalex"
+label = "OpenAlex"
+role = "literature"
+url = "https://api.openalex.org/works"
+why = "Venue and open-access metadata, and the citation graph."
+
+[[sources]]
+key = "clinicaltrials"
+label = "ClinicalTrials.gov"
+role = "registry"
+url = "https://clinicaltrials.gov/api/v2/studies"
+why = "Whether a trial was registered, and whether the endpoint it reported was the pre-specified one."
+
+[[sources]]
+key = "aha_acc"
+label = "AHA/ACC guidelines and scientific statements"
+role = "guideline"
+url = "https://www.ahajournals.org/journal/circ"
+why = "A synthesis of a body of evidence, to be treated as such and not as one study."
+
+[[sources]]
+key = "esc"
+label = "ESC Clinical Practice Guidelines"
+role = "guideline"
+url = "https://www.escardio.org/Guidelines"
+why = "European counterpart to AHA/ACC."
+
+[[sources]]
+key = "medrxiv"
+label = "medRxiv"
+role = "literature"
+url = "https://api.biorxiv.org/"
+why = "Has a Cardiovascular Medicine category. Preprints are labelled, never excluded."

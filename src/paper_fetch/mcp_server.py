@@ -38,15 +38,22 @@ from .providers import ProviderUnavailable, describe
 
 __all__ = [
     "citations",
+    "collect",
+    "collection",
+    "collections",
+    "create_collection",
     "fetch",
     "library",
     "main",
     "mcp",
+    "profiles",
     "provenance",
     "providers",
+    "recall",
     "search",
     "status",
     "text",
+    "uncollect",
 ]
 
 #: Catalogue fields a `fetch` or `library` row carries (when present on the record).
@@ -78,7 +85,10 @@ mcp = _Server(
         "is already held; `fetch` a DOI, OpenAlex id (W123), pmid:N or PMCID to add one (a held "
         "paper costs nothing); `search` finds papers across every provider; `text` reads a held "
         "full text in pages; `citations` walks the citation graph; `provenance` says where a copy "
-        "came from and under what licence. Open access is a right to read, not to republish."
+        "came from and under what licence. For work in a scientific field, pass a discipline "
+        "`profile` (see `profiles`) to `search`; for a project, keep its papers in a named "
+        "`collection`. Before searching, `recall` shows what earlier searches on the same concept "
+        "found. Open access is a right to read, not to republish."
     ),
 )
 
@@ -108,15 +118,108 @@ def _row(record: Record) -> dict[str, Any]:
 
 
 @mcp.tool()
-def search(query: str, include_closed: bool = False, limit: int = 10) -> dict[str, Any]:
-    """Search all configured literature providers and mark papers already held."""
-    return _run(lambda: _lib().search(query, oa_only=not include_closed, limit=limit))
+def search(  # noqa: PLR0917 -- MCP clients pass every argument by name
+    query: str,
+    include_closed: bool = False,
+    limit: int = 10,
+    profile: str = "",
+    collection: str = "",
+    expand: bool = True,
+) -> dict[str, Any]:
+    """Search all configured literature providers and mark papers already held.
+
+    profile: a discipline (see `profiles`): a query using a synonym is also run with the field's
+      indexed term, and hits naming the field's anchors rank first. A collection's own profile
+      applies when none is given.
+    collection: a project collection: hits say whether it lists them, and whether an earlier
+      search in it found them. Every search is remembered (see `recall`).
+    """
+    return _run(
+        lambda: _lib().search(
+            query,
+            oa_only=not include_closed,
+            limit=limit,
+            profile=profile or None,
+            collection=collection or None,
+            expand=expand,
+        )
+    )
 
 
 @mcp.tool()
-def fetch(identifier: str) -> dict[str, Any]:
-    """Fetch and privately store a legal open-access copy of a paper (held papers cost nothing)."""
-    return _run(lambda: _row(_lib().fetch(identifier)))
+def fetch(identifier: str, collection: str = "") -> dict[str, Any]:
+    """Fetch and privately store a legal open-access copy of a paper (held papers cost nothing).
+    With `collection`, also list the paper in that project collection."""
+    return _run(lambda: _row(_lib().fetch(identifier, collection=collection or None)))
+
+
+@mcp.tool()
+def profiles(slug: str = "") -> dict[str, Any]:
+    """Discipline profiles. With no slug, list them; with one, return its scope, indexed terms
+    (anchors and synonyms), measures and search guidance, for writing that field's queries."""
+
+    def operation() -> dict[str, Any]:
+        lib = _lib()
+        if slug:
+            return lib.profile(slug).guidance()
+        return {"profiles": [p.summary() for p in lib.profiles().values()]}
+
+    return _run(operation)
+
+
+@mcp.tool()
+def recall(
+    query: str = "", profile: str = "", collection: str = "", identifier: str = "", limit: int = 10
+) -> dict[str, Any]:
+    """Past searches: on the same concept as `query` (synonyms count as the same concept), in a
+    discipline `profile`, in a `collection`, or that found the paper `identifier`. Each carries
+    the papers it found, marked with what the library holds now. No network."""
+    return _run(
+        lambda: {
+            "searches": _lib().recall(
+                query,
+                profile=profile or None,
+                collection=collection or None,
+                work=identifier or None,
+                limit=limit,
+            )
+        }
+    )
+
+
+@mcp.tool()
+def collections() -> dict[str, Any]:
+    """List project collections: name, discipline profile, description, member count."""
+    return _run(lambda: {"collections": _lib().list_collections()})
+
+
+@mcp.tool()
+def collection(name: str) -> dict[str, Any]:
+    """One collection: its members (with what is held now) and its recent searches."""
+    return _run(lambda: _lib().collection(name))
+
+
+@mcp.tool()
+def create_collection(name: str, profile: str = "", description: str = "") -> dict[str, Any]:
+    """Create a project collection (lower-case name, a-z 0-9 -), or change its profile or
+    description. Its profile then applies to every search in it."""
+    return _run(
+        lambda: _lib().create_collection(
+            name, profile=profile or None, description=description or None
+        )
+    )
+
+
+@mcp.tool()
+def collect(name: str, identifiers: list[str]) -> dict[str, Any]:
+    """List papers in a collection by any identifier. Nothing is downloaded: `fetch` for that."""
+    return _run(lambda: _lib().collect(name, identifiers))
+
+
+@mcp.tool()
+def uncollect(name: str, identifiers: list[str]) -> dict[str, Any]:
+    """Remove papers from a collection. The papers stay in the library."""
+    return _run(lambda: _lib().uncollect(name, identifiers))
 
 
 @mcp.tool()

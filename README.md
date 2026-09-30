@@ -17,6 +17,34 @@ $ paper-fetch fetch 10.1371/journal.pcbi.1003285       # second time: no network
 ✓ W2036318837  [library]  2013  Ten Simple Rules for Reproducible Computational Research
 ```
 
+## Searching by discipline, for a project, with memory
+
+Three things make repeated literature work cheaper. All of them are deterministic: no language
+model runs inside paper-fetch.
+
+- **Discipline profiles** hold the search half of a field: the controlled terms it is indexed under
+  (MeSH descriptors or declared free text, each with the synonyms people write instead), the
+  quantities it reports, its authoritative sources, and advice for whoever writes the queries.
+  Searching with `--profile cardiovascular` also runs the query with each synonym swapped for its
+  indexed term ("HRV" → "heart rate variability"), and hits whose titles name the field's terms
+  rank first. Four profiles ship built in (`cardiovascular`, `neuroscience`, `respiratory`,
+  `vestibular`); add or replace one with a TOML file in `~/.config/paper-fetch/profiles/` (or
+  `$PAPER_FETCH_PROFILE_DIR`), shaped like those in `src/paper_fetch/profile_data/`.
+- **Named collections** list a project's papers inside the one shared library. A paper is stored
+  once, whichever collections list it. A collection can carry a profile, which then applies to
+  every search made for it.
+- **Search memory** remembers every search: its query, profile, collection and what it found. A
+  new search reports earlier searches on the same concept (synonyms count as the same concept) and
+  marks each hit an earlier search already found. `paper-fetch recall` asks the memory directly,
+  by concept, discipline, collection or paper, without touching the network.
+
+```console
+$ paper-fetch collection sleep-review --create --profile neuroscience
+$ paper-fetch search "slow oscillations and memory consolidation" --collection sleep-review
+$ paper-fetch fetch 10.1371/journal.pcbi.1003285 --collection sleep-review
+$ paper-fetch recall "memory consolidation"
+```
+
 ## What it will and will not do
 
 - **Open-access copies only.** A provider returns a location only for a copy *it* reports as open
@@ -107,9 +135,14 @@ graph. `paper-fetch providers` lists what is enabled and what each needs, withou
 ## Command line
 
 ```text
-paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] [--force]
+paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] [--force] [--collection C]
 paper-fetch search "<query>" [--providers a,b] [--include-closed] [-n N] [--refresh]
+                   [--profile P] [--collection C] [--no-expand]
 paper-fetch providers
+paper-fetch profiles [slug]
+paper-fetch collection [name] [--create] [--profile P] [--description D]
+paper-fetch collect <name> <id> [...] [--remove]
+paper-fetch recall ["<query>"] [--profile P] [--collection C] [--work ID] [-n N]
 paper-fetch library ["<query>"] [--full-text]
 paper-fetch text <id>
 paper-fetch provenance <id>
@@ -132,6 +165,12 @@ rec = lib.fetch("10.1371/journal.pcbi.1003285")  # rec["from"]: library | retrie
 text = lib.text(rec["work"])  # raises NotFound if there is no readable text
 prov = lib.provenance(rec["work"])
 res = lib.search("reproducible computational research")
+
+lib.create_collection("review", profile="neuroscience")
+lib.search("slow oscillations memory", collection="review")  # the collection's profile applies
+lib.fetch("10.1371/journal.pcbi.1003285", collection="review")
+lib.recall("memory consolidation")  # earlier searches on the concept, and what they found
+lib.profile("neuroscience").guidance()  # scope, terms, measures and advice for a query writer
 ```
 
 `Library(store, openalex, providers=[...], search_providers=[...])` accepts any store with the
@@ -175,21 +214,34 @@ Every tool returns one JSON object:
 
 | tool | arguments | `data` |
 |---|---|---|
-| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10` | `{"query", "providers": {name: {"status", ...}}, "hits": [...]}` |
-| `fetch` | `identifier: str` | a catalogue row (below) plus `"from"` |
+| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}` |
+| `fetch` | `identifier: str`, `collection: str = ""` | a catalogue row (below) plus `"from"` |
+| `profiles` | `slug: str = ""` | `{"profiles": [{"slug", "label", "scope", "anchors", "providers", "origin"}]}`, or one profile's `{"scope", "search_guidance", "terms", "anchors", "measures", "sources", ...}` |
+| `recall` | `query: str = ""`, `profile: str = ""`, `collection: str = ""`, `identifier: str = ""`, `limit: int = 10` | `{"searches": [{"id", "at", "query", "variants", "profile", "collection", "n_hits", "score", "hits": [...]}]}` |
+| `collections` | | `{"collections": [{"name", "profile", "description", "members", "updated"}]}` |
+| `collection` | `name: str` | `{"name", "profile", "description", "n", "with_full_text", "members": [...], "searches": [...]}` |
+| `create_collection` | `name: str`, `profile: str = ""`, `description: str = ""` | the collection |
+| `collect`, `uncollect` | `name: str`, `identifiers: [str]` | the collection |
 | `library` | `query: str = ""`, `full_text: bool = false`, `limit: int = 50` | `{"works": [row, ...], "n": int}` |
 | `text` | `identifier: str`, `offset: int = 0`, `max_chars: int = 100000` | `{"text", "offset", "end", "total_chars"}` |
 | `provenance` | `identifier: str` | the stored provenance record (below) |
 | `citations` | `identifier: str`, `direction: "citations" \| "references" = "citations"`, `limit: int = 25` | `{"of", "direction", "status", "n", "held", "source", "items": [...]}` |
 | `providers` | | `{"providers": [{"name", "label", "search", "locate", "needs", "recommends", "available", "why", "terms"}]}` |
-| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd"}` |
+| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd", "collections", "searches_remembered", "profiles"}` |
 
 **`search`**: `providers[name].status` is `ok` or `cache` (with `n`, `cost_usd`), `skipped`
 (missing configuration; `why`), `unavailable` or `error` (`why`), or for `web` also `not-needed`
 (with `why_ran` when it did run). Each hit is `{"title", "year", "ids": {"doi", "pmid", "pmcid",
 "openalex", "arxiv", ...}, "authors", "providers": [...], "is_oa", "locations": ["provider:format",
-...], "urls": [...], "in_library", "full_text_in_library", "work"}`, merged across providers by
-identifier and sorted by how many providers returned it, then by year.
+...], "urls": [...], "in_library", "full_text_in_library", "work", "key", "found_by": [queries],
+"profile_match": [anchor labels], "seen_before": {"search", "query", "at"} | null}`, plus
+`"in_collection"` when a collection is given. Hits are merged across providers and query variants by
+identifier, and sorted: those naming the profile's terms first, then by how many providers returned
+them, then by year. `memory` lists up to three earlier searches on the same concept.
+
+**`recall`**: with a query, past searches are scored by the overlap of their concepts (content
+words, synonyms mapped to indexed terms); with none, the most recent come first. Each hit is marked
+with what the library holds now.
 
 **Catalogue row** (`fetch`, `library`): `work` (the OpenAlex ID, or `doi-...`/`pmcid-...` when
 OpenAlex has no record), `doi`, `pmid`, `pmcid`, `title`, `year`, `authors` (first three),
@@ -222,6 +274,8 @@ papers/works/<work>/fulltext.{pdf,jats.xml,tei.xml,provider.txt}
 papers/works/<work>/fulltext.txt       only when the text passed the readability gate
 papers/searches/<provider>/<sha256>.json
 papers/citations/<direction>/<id>.json
+papers/collections/<name>.json         a collection: profile, description, members
+papers/memory/searches.jsonl           search memory: one row per search
 ```
 
 The same layout is used on disk and in a bucket. A lookup reads the catalogue first and falls back

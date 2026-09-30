@@ -30,15 +30,42 @@ $0.0001; one broad OpenAlex topic can hold well over 10,000 works in two years;
 `from_created_date` needs a **paid plan**, so updates re-query by publication date with a ~60-day
 overlap. It also names the two things that bite at scale — the catalogue is re-read and rewritten
 per paper (~600 B/row), and with the S3 store every stored file is also copied into
-`PAPER_FETCH_CACHE`. No collections, screening or scheduling are built; the design for them is at
-the end of that file.
+`PAPER_FETCH_CACHE`. Collections exist (below); harvesting, screening and scheduling are not built,
+and the design for them is at the end of that file.
+
+## ⭐ Discipline profiles, collections, search memory — all deterministic
+
+The search half of a scientific field lives here, not in the applications that read papers: an
+application says what field and concept it wants, and paper-fetch knows how that field is indexed
+and what was searched before. **No language model runs inside paper-fetch**; everything below is
+string matching and bookkeeping, so its behaviour is testable and repeatable.
+
+- **Profiles** (`profiles.py`, data in `profile_data/*.toml`; the operator's in
+  `~/.config/paper-fetch/profiles/` replace or add by slug). Anchors are controlled terms (a `mesh`
+  anchor must carry a real `D......` id; a term without one is `free-text`) with synonyms.
+  `search(profile=)` runs the query plus up to two variants that swap a synonym for its indexed
+  term — **never the reverse**, which would search for the less-indexed wording — merges them
+  (`found_by`), marks each hit's `profile_match` from its title, and ranks matching hits first.
+  A profile's `providers` replaces the search set only when it names some; the built-ins do not,
+  because narrowing to PubMed/Europe PMC/OpenAlex would drop the repository providers that find
+  open copies. `guidance()` is what an application's query writer reads: scope, terms, measures,
+  sources and prose advice. The four built-ins were converted from the evidence engine's domains.
+- **Collections** (`collection.py`): `papers/collections/<name>.json`, a named member list with a
+  default profile. A paper is stored once; members are work ids when held, else the identifier
+  given until fetched (`fetch(collection=)` swaps it). Re-read before each change.
+- **Memory** (`memory.py`): `papers/memory/searches.jsonl`, one row per search (query, variants,
+  concepts, profile, collection, provider statuses, up to 50 hits). Written like the catalogue:
+  re-read, append, write. Concepts are content words with every profile synonym mapped to its
+  indexed term, so "HRV" and "heart rate variability" recall each other; similarity is Jaccard.
+  Each search reports up to three earlier ones on its concept, and each hit's `seen_before`.
 
 ## ⭐ Over MCP
 
 `paper-fetch-mcp` (`src/paper_fetch/mcp_server.py`, the official `mcp` SDK: `FastMCP` on 1.x,
-`MCPServer` on 2.x; needs the `mcp` extra). Eight tools: `search`, `fetch`, `library`, `text` (paged,
-100,000 characters by default, clamped to 1,000..100,000), `provenance`, `citations`, `providers`,
-`status`. Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
+`MCPServer` on 2.x; needs the `mcp` extra). Tools: `search` (with `profile`, `collection`),
+`fetch` (with `collection`), `library`, `text` (paged, 100,000 characters by default, clamped to
+1,000..100,000), `provenance`, `citations`, `providers`, `status`, `profiles`, `recall`,
+`collections`, `collection`, `create_collection`, `collect`, `uncollect`. Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
 "unavailable" | "tool_error", "error": ...}`; `unavailable` is never "zero results". The full
 contract is in [README § MCP server](README.md#mcp-server). The server's instructions to the model
 say open access is a right to read, not to republish. **Storing a copy the user holds is not a
@@ -280,8 +307,11 @@ and one write, and the authoritative per-work objects repair any row lost in it
   adopt-orphans`) moves such orphans onto their OpenAlex ids; it deletes an orphan's objects only
   after its copy is in place, through the stores' `delete()`.
 - **No citation intent** (supporting or contrasting); OpenAlex and OpenCitations do not supply it.
-- **No ranking or semantic search over the library** — `search_library` is term matching over
-  titles, authors and, optionally, stored text.
+- **No semantic search over the library yet** — `search_library` is term matching over titles,
+  authors and, optionally, stored text. Profile ranking uses titles only (providers return no
+  abstracts), and recall matches words, not meaning: "memory consolidation" and "sleep-dependent
+  learning" are different concepts to it unless a profile declares one a synonym of the other.
+- **The memory is one object rewritten per search**, like the catalogue (~1–3 KB per search).
 - **The catalogue is one JSON-lines object re-read and rewritten on each change** — safe for
   several writers bar the instant-race above, but its cost grows with the library (HARVEST.md).
 - **Dependencies:** `pypdf` (pure Python, BSD-3) for PDF text, and `fonttools` so pypdf can decode

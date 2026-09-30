@@ -15,6 +15,7 @@ from .http import Http, Response
 from .ids import Ident, normalize
 from .library import Library, NotFound
 from .openalex import BadApiKey, NeedsApiKey, OpenAlex
+from .profiles import Profile, load_profiles
 from .providers import REGISTRY, Hit, Location, Provider, ProviderUnavailable, build, describe
 from .resolve import resolve
 from .store import PREFIX, LocalStore, MemoryStore, NotPrivate, S3Store, Store, store_from_env
@@ -39,6 +40,7 @@ __all__ = [
     "NotPrivate",
     "OpenAlex",
     "OpenCitations",
+    "Profile",
     "Provider",
     "ProviderUnavailable",
     "Response",
@@ -47,6 +49,7 @@ __all__ = [
     "__version__",
     "build",
     "describe",
+    "load_profiles",
     "looks_like_prose",
     "normalize",
     "pdf_text",
