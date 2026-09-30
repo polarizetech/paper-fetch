@@ -77,7 +77,7 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
 `fetch` (with `collection`), `library`, `text` (paged, 100,000 characters by default, clamped to
 1,000..100,000), `provenance`, `citations`, `providers`, `status`, `profiles`, `recall`,
 `collections`, `collection`, `create_collection`, `collect`, `uncollect`, `retrieve`, `passages`,
-`index`. Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
+`index`, `relevance` (scores hit titles against research sub-questions, to order fetches). Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
 "unavailable" | "tool_error", "error": ...}`; `unavailable` is never "zero results". The full
 contract is in [README § MCP server](README.md#mcp-server). The server's instructions to the model
 say open access is a right to read, not to republish. **Storing a copy the user holds is not a

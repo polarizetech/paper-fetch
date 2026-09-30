@@ -179,3 +179,4 @@ def test_status_counts_collections_and_searches() -> None:
     lib.search("x", web_fallback=False)
     st = lib.status()
     assert (st["collections"], st["searches_remembered"], st["profiles"]) == (1, 1, ["cardio"])
+    assert st["passages"]["papers"] == 0

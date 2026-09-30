@@ -242,13 +242,14 @@ Every tool returns one JSON object:
 | `collect`, `uncollect` | `name: str`, `identifiers: [str]` | the collection |
 | `retrieve` | `query: str = ""`, `queries: [str]`, `identifiers: [str]`, `collection: str = ""`, `limit: int = 20`, `per_paper: int = 0` | `{"results": [{"query", "passages": [...]}], "scope", "indexed", "reranker", "index"}` |
 | `passages` | `identifier: str`, `start: int = 0`, `limit: int = 4` | `{"work", "passages": [...]}`: a paper's passages in order |
+| `relevance` | `targets: [str]`, `texts: [str]` | `{"scores": [0..1], "method"}`: each text's closeness to the nearest target, for deciding what to fetch first |
 | `index` | `identifiers: [str]`, `collection: str = ""` | `{"indexed", "unchanged", "no_full_text", "not_held", "passages_added", "index"}` |
 | `library` | `query: str = ""`, `full_text: bool = false`, `limit: int = 50` | `{"works": [row, ...], "n": int}` |
 | `text` | `identifier: str`, `offset: int = 0`, `max_chars: int = 100000` | `{"text", "offset", "end", "total_chars"}` |
 | `provenance` | `identifier: str` | the stored provenance record (below) |
 | `citations` | `identifier: str`, `direction: "citations" \| "references" = "citations"`, `limit: int = 25` | `{"of", "direction", "status", "n", "held", "source", "items": [...]}` |
 | `providers` | | `{"providers": [{"name", "label", "search", "locate", "needs", "recommends", "available", "why", "terms"}]}` |
-| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd", "collections", "searches_remembered", "profiles"}` |
+| `status` | | `{"works", "with_full_text", "not_obtainable", "store", "locate_providers", "openalex_key", "network_calls", "openalex_spent_usd", "openalex_remaining_usd", "collections", "searches_remembered", "profiles", "passages": {"papers", "passages", "with_vectors", "embedding_model", "path"}}` |
 
 **`search`**: `providers[name].status` is `ok` or `cache` (with `n`, `cost_usd`), `skipped`
 (missing configuration; `why`), `unavailable` or `error` (`why`), or for `web` also `not-needed`
@@ -262,7 +263,8 @@ them, then by year. `memory` lists up to three earlier searches on the same conc
 
 **Passage** (`retrieve`, `passages`): `{"id": "<work>#p<ord>", "sha", "work", "ord", "start",
 "end", "text", "bm25_rank", "dense_rank", "score", "rerank_score"?, "paper": {"title", "year",
-"doi", "pmid", "authors", "is_retracted", "license", "text_sha256", "hidden_chars"}}`. Offsets are
+"doi", "pmid", "authors", "is_retracted", "license", "text_sha256", "hidden_chars", "route",
+"format"}}`. Offsets are
 into the paper's *indexed text*: the stored full text with hidden formatting characters removed;
 `hidden_chars` says how many were, and `text_sha256` identifies that text exactly. `id` survives
 rebuilding the index; `sha` changes if the passage's text does.
