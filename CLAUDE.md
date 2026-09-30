@@ -58,6 +58,17 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
   re-read, append, write. Concepts are content words with every profile synonym mapped to its
   indexed term, so "HRV" and "heart rate variability" recall each other; similarity is Jaccard.
   Each search reports up to three earlier ones on its concept, and each hit's `seen_before`.
+- **Passages** (`passages.py`, `rerank.py`): a local SQLite index (FTS5 + optional vectors, fused
+  by reciprocal rank) derived from held full texts, **not in the store**: one per machine, at
+  `PAPER_FETCH_INDEX`. Moved here from the evidence engine, same chunking, same hidden-character
+  cleaning, so offsets and `text_sha256` mean the same as they did there. Embeddings come from
+  an Ollama-compatible `/api/embed` (`PAPER_FETCH_EMBED_MODEL`), posted through `Http.post_json`
+  so `http.py` stays the only module that opens URLs besides the store; the cross-encoder is
+  ONNX (`PAPER_FETCH_RERANK_MODEL`). Both are deterministic: vectors and scores, never text. An
+  index refuses a different embedding model. `retrieve` indexes its scope on demand; a passage
+  id `<work>#p<ord>` survives rebuilds. The model-based reranker and the prompt-injection scan
+  stay in the application: they concern a model reading the text. Measured with bge-m3:
+  15 papers → 1,405 passages in 94 s; a query then takes ~10 ms.
 
 ## ⭐ Over MCP
 
@@ -65,7 +76,8 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
 `MCPServer` on 2.x; needs the `mcp` extra). Tools: `search` (with `profile`, `collection`),
 `fetch` (with `collection`), `library`, `text` (paged, 100,000 characters by default, clamped to
 1,000..100,000), `provenance`, `citations`, `providers`, `status`, `profiles`, `recall`,
-`collections`, `collection`, `create_collection`, `collect`, `uncollect`. Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
+`collections`, `collection`, `create_collection`, `collect`, `uncollect`, `retrieve`, `passages`,
+`index`. Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
 "unavailable" | "tool_error", "error": ...}`; `unavailable` is never "zero results". The full
 contract is in [README § MCP server](README.md#mcp-server). The server's instructions to the model
 say open access is a right to read, not to republish. **Storing a copy the user holds is not a
@@ -307,8 +319,7 @@ and one write, and the authoritative per-work objects repair any row lost in it
   adopt-orphans`) moves such orphans onto their OpenAlex ids; it deletes an orphan's objects only
   after its copy is in place, through the stores' `delete()`.
 - **No citation intent** (supporting or contrasting); OpenAlex and OpenCitations do not supply it.
-- **No semantic search over the library yet** — `search_library` is term matching over titles,
-  authors and, optionally, stored text. Profile ranking uses titles only (providers return no
+- **Profile ranking and recall are lexical.** Profile ranking uses titles only (providers return no
   abstracts), and recall matches words, not meaning: "memory consolidation" and "sleep-dependent
   learning" are different concepts to it unless a profile declares one a synonym of the other.
 - **The memory is one object rewritten per search**, like the catalogue (~1–3 KB per search).

@@ -7,6 +7,8 @@
     paper-fetch collection [name] [--create] [--profile P] [--description D]
     paper-fetch collect <name> <id> [...] [--remove]     list papers in a collection
     paper-fetch recall ["<query>"] [--profile P] [--collection C] [--work ID]
+    paper-fetch index [id ...] [--collection C] [--refresh | --rebuild]   the passage index
+    paper-fetch retrieve "<query>" [--collection C] [--work ID ...] [-n N] passages, best first
     paper-fetch providers                                what is enabled, what each needs, its terms
     paper-fetch library ["<query>"] [--full-text]        search only what is already held
     paper-fetch text <id>                                print stored full text
@@ -80,6 +82,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--collection")
     p.add_argument("--work", help="searches that found this paper")
     p.add_argument("-n", type=int, default=10)
+
+    p = sub.add_parser("index", help="index held full texts into passages")
+    p.add_argument("ids", nargs="*")
+    p.add_argument("--collection")
+    p.add_argument("--refresh", action="store_true", help="re-index texts that changed")
+    p.add_argument("--rebuild", action="store_true", help="delete the index and index again")
+
+    p = sub.add_parser("retrieve", help="passages of held papers that answer a query")
+    p.add_argument("query")
+    p.add_argument("--collection")
+    p.add_argument("--work", action="append", help="limit to this paper (repeatable)")
+    p.add_argument("-n", type=int, default=8)
+    p.add_argument("--per-paper", type=int, default=0)
 
     p = sub.add_parser("library", help="search held papers")
     p.add_argument("query", nargs="?", default="")
@@ -194,6 +209,39 @@ def _recall(lib: Library, a: argparse.Namespace) -> None:
     print(f"  {len(rows)} past search(es)")
 
 
+def _index(lib: Library, a: argparse.Namespace) -> None:
+    if a.rebuild:
+        path = lib.passages.path
+        lib.passages.close()
+        for suffix in ("", "-wal", "-shm"):
+            path.with_name(path.name + suffix).unlink(missing_ok=True)
+        lib.passages = None
+    r = lib.index_works(a.ids or None, collection=a.collection, refresh=a.refresh)
+    print(
+        f"indexed {len(r['indexed'])} paper(s), {r['passages_added']} passages; "
+        f"{r['unchanged']} unchanged; {len(r['no_full_text'])} without full text"
+    )
+    for key in r["not_held"]:
+        print(f"  not held: {key}")
+    print(json.dumps(lib.passages.stats()))
+
+
+def _retrieve(lib: Library, a: argparse.Namespace) -> None:
+    res = lib.retrieve(
+        a.query,
+        identifiers=a.work,
+        collection=a.collection,
+        limit=a.n,
+        per_paper=a.per_paper or None,
+    )
+    for p in res["results"][0]["passages"]:
+        paper = p["paper"]
+        print(f"{p['id']}  [{p['start']}:{p['end']}]  {paper.get('year')}  {paper.get('title')}")
+        print("    " + " ".join(p["text"].split())[:300])
+    scope = "whole index" if res["scope"] is None else f"{res['scope']} paper(s)"
+    print(f"  scope: {scope}; reranker: {res['reranker'] or 'none'}; index: {res['index']}")
+
+
 def _providers(lib: Library) -> None:
     for d in describe(lib.http):
         can = "+".join(x for x, y in (("search", d["search"]), ("locate", d["locate"])) if y)
@@ -255,6 +303,10 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         )
     elif a.cmd == "recall":
         _recall(lib, a)
+    elif a.cmd == "index":
+        _index(lib, a)
+    elif a.cmd == "retrieve":
+        _retrieve(lib, a)
     elif a.cmd == "library":
         _library(lib, a)
     elif a.cmd == "text":

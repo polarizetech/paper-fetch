@@ -8,6 +8,7 @@
 
     lib.search("HRV in athletes", profile="cardiovascular", collection="my-review")
     lib.recall("heart rate variability")             # past searches on it, and their papers
+    lib.retrieve("does HRV predict overtraining", collection="my-review")   # passages, ranked
 
 Discipline profiles (`profiles.py`), named collections (`collection.py`) and the search memory
 (`memory.py`) are all deterministic: no model runs inside the library.
@@ -51,8 +52,10 @@ from .idconv import enrich
 from .ids import Ident, doi_key, normalize, pmcid_from_openalex
 from .memory import SearchMemory, concepts
 from .openalex import OpenAlex
+from .passages import Passage, PassageIndex, embedder_from_env, index_path
 from .profiles import Profile, load_profiles, vocabulary
 from .providers import FALLBACK_SEARCH, Hit, Ids, Provider, ProviderUnavailable, build
+from .rerank import Reranker, reranker_from_env
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
 from .text import is_pdf, looks_like_prose, pdf_text
@@ -154,6 +157,9 @@ class Library:
         self.collections = Collections(store)
         self._profiles: dict[str, Profile] | None = None
         self._memory: SearchMemory | None = None
+        self._passages: PassageIndex | None = None
+        self._reranker: Reranker | None = None
+        self._reranker_built = False
 
     @classmethod
     def default(cls) -> Library:
@@ -334,6 +340,185 @@ class Library:
             "n": len(members),
             "with_full_text": sum(m["full_text"] for m in members),
             "members": members,
+        }
+
+    # -- passages: indexing and retrieval ------------------------------------------------------
+
+    @property
+    def passages(self) -> PassageIndex:
+        """The local passage index (see `passages.py`), opened on first use."""
+        if self._passages is None:
+            model, embed = embedder_from_env()
+            self._passages = PassageIndex(index_path(), model, embed)
+        return self._passages
+
+    @passages.setter
+    def passages(self, value: PassageIndex | None) -> None:
+        self._passages = value  # None reopens it on next use
+
+    @property
+    def reranker(self) -> Reranker | None:
+        if not self._reranker_built:
+            self._reranker, self._reranker_built = reranker_from_env(), True
+        return self._reranker
+
+    @reranker.setter
+    def reranker(self, value: Reranker | None) -> None:
+        self._reranker, self._reranker_built = value, True
+
+    def _scope(
+        self, identifiers: Sequence[str] | None, collection: str | None
+    ) -> tuple[list[Record] | None, list[str]]:
+        """Held catalogue rows named by identifiers and/or a collection; and what is not held."""
+        if not identifiers and not collection:
+            return None, []
+        rows: dict[str, Record] = {}
+        missing: list[str] = []
+        keys = list(identifiers or [])
+        if collection:
+            keys += list(self.collections.require(collection)["members"])
+        for key in keys:  # a work id, a member key such as "doi:10...", or any identifier
+            try:
+                rec = self.index().get(key) or self.lookup(key)
+            except ValueError:
+                rec = None
+            if rec:
+                rows[rec["work"]] = rec
+            else:
+                missing.append(key)
+        return list(rows.values()), missing
+
+    def index_works(
+        self,
+        identifiers: Sequence[str] | None = None,
+        *,
+        collection: str | None = None,
+        refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Put held full texts into the passage index. With no identifiers and no collection,
+        every held full text. Already-indexed works are skipped unless `refresh`, which re-reads
+        each text and re-indexes only those whose text changed."""
+        rows, missing = self._scope(identifiers, collection)
+        if rows is None:
+            rows = list(self.index().values())
+        report: dict[str, Any] = {
+            "indexed": [],
+            "unchanged": 0,
+            "no_full_text": [],
+            "not_held": missing,
+            "passages_added": 0,
+        }
+        for rec in rows:
+            if not rec["full_text"]:
+                report["no_full_text"].append(rec["work"])
+                continue
+            if not refresh and self.passages.has(rec["work"]):
+                report["unchanged"] += 1
+                continue
+            added = self.passages.add(rec, self.text(rec["work"]))
+            if added:
+                report["indexed"].append(rec["work"])
+                report["passages_added"] += added
+            else:
+                report["unchanged"] += 1
+        return report
+
+    def retrieve(
+        self,
+        queries: str | Sequence[str],
+        *,
+        identifiers: Sequence[str] | None = None,
+        collection: str | None = None,
+        limit: int = 20,
+        pool: int = 100,
+        per_paper: int | None = None,
+        rerank: bool | None = None,
+    ) -> dict[str, Any]:
+        """The passages that best answer each query, from held full texts.
+
+        Scope: the papers named by `identifiers` and/or `collection` (indexed first if they are
+        not yet), else the whole passage index. Ranking: BM25 fused with dense similarity when an
+        embedding model is configured, then the cross-encoder when one is configured and `rerank`
+        is not False. `per_paper` caps passages from any one paper. Each passage carries its
+        stable `id` (`<work>#p<ord>`), exact offsets into the indexed text, and its paper.
+        """
+        qs = [queries] if isinstance(queries, str) else list(queries)
+        rows, missing = self._scope(identifiers, collection)
+        indexed = None
+        works = None
+        if rows is not None:
+            indexed = self.index_works([r["work"] for r in rows])
+            indexed["not_held"] = missing
+            works = [r["work"] for r in rows if r["full_text"]]
+        reranker = self.reranker if rerank is not False else None
+        if rerank and reranker is None:
+            raise ValueError("rerank requested but PAPER_FETCH_RERANK_MODEL is not set")
+        candidates = max(limit * 3, 30) if reranker else limit * (3 if per_paper else 1)
+        papers: dict[str, dict[str, Any] | None] = {}
+        results = []
+        for q, vec in zip(qs, self.passages.query_vectors(qs), strict=True):
+            found = self.passages.search(q, vec, works=works, limit=candidates, pool=pool)
+            scores: list[float | None] = (
+                list(reranker.score(q, found)) if reranker and found else [None] * len(found)
+            )
+            order = sorted(range(len(found)), key=lambda i: -(scores[i] or 0.0))
+            kept: list[dict[str, Any]] = []
+            count: dict[str, int] = {}
+            for i in order:
+                p = found[i]
+                if per_paper and count.get(p.work, 0) >= per_paper:
+                    continue
+                count[p.work] = count.get(p.work, 0) + 1
+                kept.append(self._passage_row(p, papers, scores[i]))
+                if len(kept) >= limit:
+                    break
+            results.append({"query": q, "passages": kept})
+        return {
+            "results": results,
+            "scope": None if works is None else len(works),
+            "indexed": indexed,
+            "reranker": reranker.name if reranker else None,
+            "index": self.passages.stats(),
+        }
+
+    def _passage_row(
+        self, p: Passage, papers: dict[str, dict[str, Any] | None], rerank_score: float | None
+    ) -> dict[str, Any]:
+        if p.work not in papers:
+            papers[p.work] = self.passages.paper(p.work)
+        paper = papers[p.work] or {}
+        row = p.to_json()
+        if rerank_score is not None:
+            row["rerank_score"] = round(rerank_score, 5)
+        row["paper"] = {
+            k: paper.get(k)
+            for k in (
+                "title",
+                "year",
+                "doi",
+                "pmid",
+                "authors",
+                "is_retracted",
+                "license",
+                "text_sha256",
+                "hidden_chars",
+            )
+        }
+        return row
+
+    def paper_passages(self, identifier: str, start: int = 0, limit: int = 4) -> dict[str, Any]:
+        """A held paper's passages in order from position `start` (indexing it if needed)."""
+        rec = self._held(identifier)
+        if not rec["full_text"]:
+            raise NotFound(f"{rec['work']} has no readable full text (see its provenance)")
+        self.index_works([rec["work"]])
+        papers: dict[str, dict[str, Any] | None] = {}
+        return {
+            "work": rec["work"],
+            "passages": [
+                self._passage_row(p, papers, None)
+                for p in self.passages.passages(rec["work"], start, limit)
+            ],
         }
 
     # -- catalogue ------------------------------------------------------------------------------

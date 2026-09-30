@@ -44,7 +44,12 @@ def test_only_the_http_module_and_store_touch_urllib_request() -> None:
 
 
 def test_core_imports_are_stdlib_plus_pypdf() -> None:
-    optional = {"mcp_server.py": {"mcp"}, "store.py": {"boto3", "botocore"}}
+    optional = {
+        "mcp_server.py": {"mcp"},
+        "store.py": {"boto3", "botocore"},
+        "passages.py": {"numpy"},
+        "rerank.py": {"numpy", "onnxruntime", "huggingface_hub", "tokenizers"},
+    }
     for name, text in FILES.items():
         mods: set[str] = set()
         for node in ast.walk(ast.parse(text)):

@@ -8,13 +8,14 @@ Tests replace this class with a fake that serves recorded responses; nothing els
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Any, Protocol
 
 __all__ = ["Http", "HttpClient", "Response", "user_agent"]
 
@@ -103,3 +104,19 @@ class Http:
             if attempt + 1 < tries:
                 time.sleep(0.8 * (attempt + 1))
         raise ConnectionError(f"GET {url} failed after {tries} attempts: {last}")
+
+    def post_json(self, url: str, payload: Any, *, timeout: float | None = None) -> Any:
+        """POST a JSON body and return the decoded JSON answer. One attempt; for local services
+        (the embedding endpoint), not for the rate-limited providers."""
+        req = urllib.request.Request(
+            url,
+            json.dumps(payload).encode(),
+            {"User-Agent": user_agent(), "Content-Type": "application/json"},
+        )
+        with self._lock:
+            self.calls += 1
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+                return json.loads(r.read())
+        except (OSError, ValueError) as e:
+            raise ConnectionError(f"POST {url} failed: {e}") from e

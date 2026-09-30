@@ -38,11 +38,19 @@ model runs inside paper-fetch.
   marks each hit an earlier search already found. `paper-fetch recall` asks the memory directly,
   by concept, discipline, collection or paper, without touching the network.
 
+- **Passage retrieval** answers "which passage of which held paper answers this?", which is what
+  quoting needs. Held full texts are split into passages (the reference list is left out) in a
+  local SQLite index, ranked by BM25 fused with embedding similarity when an embedding model is
+  configured, and optionally re-scored by a cross-encoder. Each passage has a stable id
+  (`<work>#p<ord>`) and exact character offsets. A retrieval scoped to a collection or a list of
+  papers indexes them first if needed.
+
 ```console
 $ paper-fetch collection sleep-review --create --profile neuroscience
 $ paper-fetch search "slow oscillations and memory consolidation" --collection sleep-review
 $ paper-fetch fetch 10.1371/journal.pcbi.1003285 --collection sleep-review
 $ paper-fetch recall "memory consolidation"
+$ paper-fetch retrieve "does sleep improve recall?" --collection sleep-review
 ```
 
 ## What it will and will not do
@@ -74,13 +82,16 @@ Python 3.11+.
 ```bash
 pip install "paper-fetch[mcp]"          # CLI + MCP server
 pip install "paper-fetch[mcp,s3]"       # ... plus the S3-compatible store (boto3)
+pip install "paper-fetch[retrieval]"    # numpy, for embedding-based passage retrieval
+pip install "paper-fetch[rerank]"       # onnxruntime + tokenizers, for the cross-encoder
 # or, from a checkout:
 uv sync && uv run paper-fetch --help
 ```
 
 The core depends only on the standard library and [`pypdf`](https://pypi.org/project/pypdf/)
 (pure Python, used for PDF text extraction; no external binaries such as `pdftotext`). `mcp` is
-needed only for the server, `boto3` only for the S3 store.
+needed only for the server, `boto3` only for the S3 store, `numpy` only for embedding retrieval, and
+`onnxruntime` only for reranking.
 
 ## Configure
 
@@ -106,6 +117,10 @@ those files out of repositories (`chmod 600`).
 | `PAPER_FETCH_S3_BUCKET` | S3 store: bucket (required when `PAPER_FETCH_STORE=s3`). |
 | `PAPER_FETCH_S3_ENDPOINT_URL`, `PAPER_FETCH_S3_REGION` | S3 store: endpoint for non-AWS services (DigitalOcean Spaces, MinIO, R2, ...) and region. |
 | `PAPER_FETCH_S3_ACCESS_KEY_ID`, `PAPER_FETCH_S3_SECRET_ACCESS_KEY` | S3 store credentials; if unset, boto3's usual credential chain applies. |
+| `PAPER_FETCH_PROFILE_DIR` | Your discipline profiles (`*.toml`). Default `~/.config/paper-fetch/profiles`. |
+| `PAPER_FETCH_INDEX` | The passage index file. Default `passages.sqlite` in the local store's directory. Derived: deleting it loses nothing. |
+| `PAPER_FETCH_EMBED_MODEL`, `PAPER_FETCH_EMBED_URL` | An embedding model (e.g. `bge-m3`) on an Ollama-compatible endpoint (default `http://127.0.0.1:11434`). Unset, retrieval is lexical (BM25). |
+| `PAPER_FETCH_RERANK_MODEL` | A cross-encoder on the Hugging Face hub in ONNX form, `repo::file`, e.g. `onnx-community/bge-reranker-v2-m3-ONNX::onnx/model_int8.onnx`. Unset, no reranking. |
 | `PAPER_FETCH_S3_PUBLIC_URL` | S3 store: the anonymous base URL used to prove objects are *not* public. Default `https://<bucket>.<endpoint host>`. |
 
 ## Providers
@@ -143,6 +158,8 @@ paper-fetch profiles [slug]
 paper-fetch collection [name] [--create] [--profile P] [--description D]
 paper-fetch collect <name> <id> [...] [--remove]
 paper-fetch recall ["<query>"] [--profile P] [--collection C] [--work ID] [-n N]
+paper-fetch index [id ...] [--collection C] [--refresh | --rebuild]
+paper-fetch retrieve "<query>" [--collection C] [--work ID ...] [-n N] [--per-paper N]
 paper-fetch library ["<query>"] [--full-text]
 paper-fetch text <id>
 paper-fetch provenance <id>
@@ -171,6 +188,7 @@ lib.search("slow oscillations memory", collection="review")  # the collection's 
 lib.fetch("10.1371/journal.pcbi.1003285", collection="review")
 lib.recall("memory consolidation")  # earlier searches on the concept, and what they found
 lib.profile("neuroscience").guidance()  # scope, terms, measures and advice for a query writer
+lib.retrieve(["does sleep improve recall?"], collection="review", per_paper=2)
 ```
 
 `Library(store, openalex, providers=[...], search_providers=[...])` accepts any store with the
@@ -222,6 +240,9 @@ Every tool returns one JSON object:
 | `collection` | `name: str` | `{"name", "profile", "description", "n", "with_full_text", "members": [...], "searches": [...]}` |
 | `create_collection` | `name: str`, `profile: str = ""`, `description: str = ""` | the collection |
 | `collect`, `uncollect` | `name: str`, `identifiers: [str]` | the collection |
+| `retrieve` | `query: str = ""`, `queries: [str]`, `identifiers: [str]`, `collection: str = ""`, `limit: int = 20`, `per_paper: int = 0` | `{"results": [{"query", "passages": [...]}], "scope", "indexed", "reranker", "index"}` |
+| `passages` | `identifier: str`, `start: int = 0`, `limit: int = 4` | `{"work", "passages": [...]}`: a paper's passages in order |
+| `index` | `identifiers: [str]`, `collection: str = ""` | `{"indexed", "unchanged", "no_full_text", "not_held", "passages_added", "index"}` |
 | `library` | `query: str = ""`, `full_text: bool = false`, `limit: int = 50` | `{"works": [row, ...], "n": int}` |
 | `text` | `identifier: str`, `offset: int = 0`, `max_chars: int = 100000` | `{"text", "offset", "end", "total_chars"}` |
 | `provenance` | `identifier: str` | the stored provenance record (below) |
@@ -238,6 +259,13 @@ Every tool returns one JSON object:
 `"in_collection"` when a collection is given. Hits are merged across providers and query variants by
 identifier, and sorted: those naming the profile's terms first, then by how many providers returned
 them, then by year. `memory` lists up to three earlier searches on the same concept.
+
+**Passage** (`retrieve`, `passages`): `{"id": "<work>#p<ord>", "sha", "work", "ord", "start",
+"end", "text", "bm25_rank", "dense_rank", "score", "rerank_score"?, "paper": {"title", "year",
+"doi", "pmid", "authors", "is_retracted", "license", "text_sha256", "hidden_chars"}}`. Offsets are
+into the paper's *indexed text*: the stored full text with hidden formatting characters removed;
+`hidden_chars` says how many were, and `text_sha256` identifies that text exactly. `id` survives
+rebuilding the index; `sha` changes if the passage's text does.
 
 **`recall`**: with a query, past searches are scored by the overlap of their concepts (content
 words, synonyms mapped to indexed terms); with none, the most recent come first. Each hit is marked
@@ -278,6 +306,9 @@ papers/collections/<name>.json         a collection: profile, description, membe
 papers/memory/searches.jsonl           search memory: one row per search
 ```
 
+The passage index is not in the store: it is a local SQLite file derived from the stored full
+texts (`PAPER_FETCH_INDEX`), one per machine, rebuilt by `paper-fetch index --rebuild`.
+
 The same layout is used on disk and in a bucket. A lookup reads the catalogue first and falls back
 to the per-work provenance, so a stale or deleted catalogue can slow a lookup down but can never
 cause a second download.
@@ -293,7 +324,10 @@ cause a second download.
   (`--refresh` bypasses the cache).
 - Rate limits are the providers': PLOS allows 10 requests/minute, unkeyed OpenAlex has a small
   daily budget, and so on. Requests are spaced politely per provider.
-- `library` search is term matching over titles and authors (optionally full text), not ranking.
+- `library` search is term matching over titles and authors (optionally full text), not ranking;
+  ranked retrieval is `retrieve`, over passages.
+- Indexing with embeddings is the slow step: about 15 passages a second with `bge-m3` on a laptop,
+  so a paper takes a few seconds the first time and nothing after.
 
 ## Development
 
