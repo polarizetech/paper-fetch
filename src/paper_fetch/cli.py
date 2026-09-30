@@ -2,6 +2,11 @@
 
     paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] library first, then OpenAlex + OA routes
     paper-fetch search "<query>" [--providers a,b]       every search provider, merged
+                [--profile P] [--collection C]           in a discipline / for a project
+    paper-fetch profiles [slug]                          discipline profiles, or one in full
+    paper-fetch collection [name] [--create] [--profile P] [--description D]
+    paper-fetch collect <name> <id> [...] [--remove]     list papers in a collection
+    paper-fetch recall ["<query>"] [--profile P] [--collection C] [--work ID]
     paper-fetch providers                                what is enabled, what each needs, its terms
     paper-fetch library ["<query>"] [--full-text]        search only what is already held
     paper-fetch text <id>                                print stored full text
@@ -41,6 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("fetch", help="get papers into the library")
     p.add_argument("ids", nargs="+")
     p.add_argument("--force", action="store_true", help="ask the providers even if held")
+    p.add_argument("--collection", help="also list the papers in this collection")
 
     p = sub.add_parser("search", help="federated search across providers")
     p.add_argument("query")
@@ -48,8 +54,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--include-closed", action="store_true")
     p.add_argument("-n", type=int, default=10)
     p.add_argument("--refresh", action="store_true", help="ignore cached answers")
+    p.add_argument("--profile", help="a discipline profile (see `profiles`)")
+    p.add_argument("--collection", help="search for this collection (its profile applies)")
+    p.add_argument("--no-expand", action="store_true", help="do not add synonym variants")
 
     sub.add_parser("providers", help="list providers (no network)")
+
+    p = sub.add_parser("profiles", help="discipline profiles")
+    p.add_argument("slug", nargs="?", default="")
+
+    p = sub.add_parser("collection", help="list collections, or show / create one")
+    p.add_argument("name", nargs="?", default="")
+    p.add_argument("--create", action="store_true")
+    p.add_argument("--profile")
+    p.add_argument("--description")
+
+    p = sub.add_parser("collect", help="list papers in a collection (no download)")
+    p.add_argument("name")
+    p.add_argument("ids", nargs="+")
+    p.add_argument("--remove", action="store_true")
+
+    p = sub.add_parser("recall", help="past searches (no network)")
+    p.add_argument("query", nargs="?", default="")
+    p.add_argument("--profile")
+    p.add_argument("--collection")
+    p.add_argument("--work", help="searches that found this paper")
+    p.add_argument("-n", type=int, default=10)
 
     p = sub.add_parser("library", help="search held papers")
     p.add_argument("query", nargs="?", default="")
@@ -81,7 +111,7 @@ def _flag(item: dict[str, Any]) -> str:
 
 def _fetch(lib: Library, a: argparse.Namespace) -> None:
     for i in a.ids:
-        r = lib.fetch(i, force=a.force)
+        r = lib.fetch(i, force=a.force, collection=a.collection)
         mark = "✓" if r["full_text"] else "✗"
         title = (r.get("title") or "")[:70]
         print(f"{mark} {r['work']}  [{r['from']}]  {r.get('year')}  {title}")
@@ -99,8 +129,19 @@ def _fetch(lib: Library, a: argparse.Namespace) -> None:
 def _search(lib: Library, a: argparse.Namespace) -> None:
     names = [n.strip() for n in a.providers.split(",")] if a.providers else None
     res = lib.search(
-        a.query, providers=names, oa_only=not a.include_closed, limit=a.n, refresh=a.refresh
+        a.query,
+        providers=names,
+        oa_only=not a.include_closed,
+        limit=a.n,
+        refresh=a.refresh,
+        profile=a.profile,
+        collection=a.collection,
+        expand=not a.no_expand,
     )
+    for v in res["variants"]:
+        print(f"  also searched: {v}")
+    for m in res["memory"]:
+        print(f"  searched before ({m['at'][:10]}, {m['n_hits']} hits): {m['query']}")
     for name, st in res["providers"].items():
         if st["status"] in ("ok", "cache"):
             extra = f"{st.get('n', 0)} hits, ${st.get('cost_usd', 0)}"
@@ -111,8 +152,46 @@ def _search(lib: Library, a: argparse.Namespace) -> None:
     for h in res["hits"]:
         ident = h["ids"].get("doi") or h["ids"].get("pmcid") or h["ids"].get("arxiv") or ""
         provs = ",".join(sorted(set(h["providers"])))
-        print(f" {_flag(h)} {h['year'] or '':4} [{provs}] {(h['title'] or '')[:70]}  {ident}")
-    print(LEGEND)
+        marks = ("*" if h["profile_match"] else " ") + ("↺" if h["seen_before"] else " ")
+        print(f" {_flag(h)}{marks}{h['year'] or '':4} [{provs}] {(h['title'] or '')[:70]}  {ident}")
+    print(LEGEND + "   * names the profile's terms   ↺ found by an earlier search")
+
+
+def _profiles(lib: Library, a: argparse.Namespace) -> None:
+    if a.slug:
+        print(json.dumps(lib.profile(a.slug).guidance(), indent=1, ensure_ascii=False))
+        return
+    for p in lib.profiles().values():
+        print(f"  {p.slug:16s} {p.label}  ({len(p.anchors)} anchors; {p.origin})")
+
+
+def _collection(lib: Library, a: argparse.Namespace) -> None:
+    if a.create or a.profile is not None or a.description is not None:
+        lib.create_collection(a.name, profile=a.profile, description=a.description)
+    if not a.name:
+        for c in lib.list_collections():
+            print(f"  {c['name']:24s} {c['members']:5d} papers  {c['profile'] or ''}")
+        return
+    c = lib.collection(a.name)
+    print(f"{c['name']}  profile={c['profile']}  {c['n']} papers, {c['with_full_text']} readable")
+    if c["description"]:
+        print(f"  {c['description']}")
+    for m in c["members"]:
+        mark = "■" if m["full_text"] else "□" if m["in_library"] else " "
+        print(f" {mark} {m['work'] or m['key']:24s} {m.get('year') or '':4} {m.get('title') or ''}")
+    for s in c["searches"]:
+        print(f"  searched {s['at'][:10]}: {s['query']}  ({s['n_hits']} hits)")
+
+
+def _recall(lib: Library, a: argparse.Namespace) -> None:
+    rows = lib.recall(a.query, profile=a.profile, collection=a.collection, work=a.work, limit=a.n)
+    for r in rows:
+        where = " ".join(f"{k}={r[k]}" for k in ("profile", "collection") if r.get(k))
+        print(f"{r['at'][:16]}  {r['query']}  ({r['n_hits']} hits; score {r['score']}) {where}")
+        for h in r["hits"][:5]:
+            mark = "■" if h["full_text_in_library"] else "□" if h["in_library"] else " "
+            print(f"   {mark} {h.get('year') or '':4} {(h.get('title') or '')[:80]}")
+    print(f"  {len(rows)} past search(es)")
 
 
 def _providers(lib: Library) -> None:
@@ -165,6 +244,17 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         _search(lib, a)
     elif a.cmd == "providers":
         _providers(lib)
+    elif a.cmd == "profiles":
+        _profiles(lib, a)
+    elif a.cmd == "collection":
+        _collection(lib, a)
+    elif a.cmd == "collect":
+        (lib.uncollect if a.remove else lib.collect)(a.name, a.ids)
+        _collection(
+            lib, argparse.Namespace(name=a.name, create=False, profile=None, description=None)
+        )
+    elif a.cmd == "recall":
+        _recall(lib, a)
     elif a.cmd == "library":
         _library(lib, a)
     elif a.cmd == "text":

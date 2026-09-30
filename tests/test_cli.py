@@ -65,7 +65,7 @@ def test_search_and_providers(capsys: pytest.CaptureFixture[str]) -> None:
     ]
     _, out, _ = run(["search", "example", "-n", "3"], capsys, library=lib)
     assert "1 distinct papers" in out
-    assert " ■ 2020 [a] An example  10.5555/example.001" in out
+    assert " ■  2020 [a] An example  10.5555/example.001" in out
     assert "needs PAPER_FETCH_TEST_NEVER_SET" in out
     _, out, _ = run(["providers"], capsys, library=lib)
     assert "pmc-s3" in out
@@ -124,3 +124,37 @@ def test_module_entry_point(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc:
         runpy.run_module("paper_fetch", run_name="__main__")
     assert exc.value.code == 0
+
+
+def test_profiles_collections_and_recall(capsys: pytest.CaptureFixture[str]) -> None:
+    lib, _ = make_library()
+    lib.search_providers = [
+        FakeProvider(
+            "a", hits=[Hit("a", "Heart rate variability in rowers", 2019, {"doi": DOI}, True)]
+        )
+    ]
+    _, out, _ = run(["profiles"], capsys, library=lib)
+    assert "cardiovascular" in out
+    _, out, _ = run(["profiles", "cardiovascular"], capsys, library=lib)
+    assert "heart rate variability" in json.loads(out)["terms"]
+
+    run(["collection", "review", "--create", "--profile", "cardiovascular"], capsys, library=lib)
+    _, out, _ = run(["search", "HRV in rowers", "--collection", "review"], capsys, library=lib)
+    assert "also searched: heart rate variability in rowers" in out
+    assert " *" in out  # the hit names the profile's terms
+    _, out, _ = run(["search", "heart rate variability rowers"], capsys, library=lib)
+    assert "searched before" in out
+    assert "↺" in out
+
+    _, out, _ = run(["fetch", DOI, "--collection", "review"], capsys, library=lib)
+    _, out, _ = run(["collection", "review"], capsys, library=lib)
+    assert "profile=cardiovascular  1 papers, 1 readable" in out
+    assert "searched" in out
+    _, out, _ = run(["collection"], capsys, library=lib)
+    assert "review" in out
+    _, out, _ = run(["collect", "review", DOI, "--remove"], capsys, library=lib)
+    assert "0 papers" in out
+    _, out, _ = run(["recall", "HRV", "--collection", "review"], capsys, library=lib)
+    assert "1 past search(es)" in out
+    code, _, err = run(["search", "x", "--profile", "nope"], capsys, library=lib)
+    assert (code, "unknown profile" in err) == (2, True)

@@ -6,6 +6,12 @@
     res = lib.search("reproducible computational research")   # federated: every search provider
     res["hits"], res["providers"]                    # merged hits; per-provider status
 
+    lib.search("HRV in athletes", profile="cardiovascular", collection="my-review")
+    lib.recall("heart rate variability")             # past searches on it, and their papers
+
+Discipline profiles (`profiles.py`), named collections (`collection.py`) and the search memory
+(`memory.py`) are all deterministic: no model runs inside the library.
+
 **Index-first is the whole point, and it is tested rather than asserted**: the test suite fetches
 a paper, fetches it again, deletes the catalogue, fetches it a third time, and asserts the network
 was touched only the first time.
@@ -39,10 +45,13 @@ from pathlib import Path
 from typing import Any
 
 from .citations import DIRECTIONS, OpenCitations
+from .collection import Collections
 from .http import HttpClient
 from .idconv import enrich
 from .ids import Ident, doi_key, normalize, pmcid_from_openalex
+from .memory import SearchMemory, concepts
 from .openalex import OpenAlex
+from .profiles import Profile, load_profiles, vocabulary
 from .providers import FALLBACK_SEARCH, Hit, Ids, Provider, ProviderUnavailable, build
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
@@ -142,6 +151,9 @@ class Library:
         self._index: dict[str, Record] | None = None
         self._loaded: dict[str, str] = {}  # the catalogue as last read, to tell what we changed
         self.opencitations = OpenCitations(self.http)
+        self.collections = Collections(store)
+        self._profiles: dict[str, Profile] | None = None
+        self._memory: SearchMemory | None = None
 
     @classmethod
     def default(cls) -> Library:
@@ -157,6 +169,172 @@ class Library:
     @search_providers.setter
     def search_providers(self, value: Sequence[Provider]) -> None:
         self._search_providers = list(value)
+
+    # -- profiles and memory --------------------------------------------------------------------
+
+    def profiles(self) -> dict[str, Profile]:
+        """Every discipline profile: built-in, then the operator's (see `profiles.py`)."""
+        if self._profiles is None:
+            self._profiles = load_profiles()
+        return self._profiles
+
+    def profile(self, slug: str) -> Profile:
+        known = self.profiles()
+        if slug not in known:
+            raise ValueError(f"unknown profile {slug!r}; known: {', '.join(sorted(known))}")
+        return known[slug]
+
+    @property
+    def memory(self) -> SearchMemory:
+        if self._memory is None:
+            self._memory = SearchMemory(self.store, vocabulary(self.profiles()))
+        return self._memory
+
+    def recall(
+        self,
+        query: str = "",
+        *,
+        profile: str | None = None,
+        collection: str | None = None,
+        work: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Past searches: on a concept (`query`), in a discipline, in a collection, or that found
+        a paper (`work`: any identifier). Each hit is marked with what the library holds now."""
+        works = None
+        if work:
+            ident = normalize(work)
+            rec = self.lookup(ident)
+            works = {f"{ident.kind}:{ident.value.lower()}", ident.value}
+            if rec:
+                works |= {rec["work"], *self._aliases(rec)}
+        rows = self.memory.recall(
+            query, profile=profile, collection=collection, works=works, limit=limit
+        )
+        for r in rows:
+            for h in r["hits"]:
+                held = self.index().get(h["work"]) if h.get("work") else None
+                held = held or self._held_by_key(h["key"])
+                h["in_library"] = bool(held)
+                h["full_text_in_library"] = bool(held and held["full_text"])
+                h["work"] = held["work"] if held else h.get("work")
+        return rows
+
+    def _held_by_key(self, key: str) -> Record | None:
+        kind, _, value = key.partition(":")
+        return self._by(kind, value) if kind in ("doi", "pmcid", "pmid", "arxiv") else None
+
+    # -- collections ----------------------------------------------------------------------------
+
+    def create_collection(
+        self, name: str, *, profile: str | None = None, description: str | None = None
+    ) -> dict[str, Any]:
+        """Create a named collection, or change its profile or description."""
+        if profile:
+            self.profile(profile)
+        return self._describe(
+            self.collections.create(name, profile=profile, description=description)
+        )
+
+    def collection(self, name: str, *, history: int = 20) -> dict[str, Any]:
+        """A collection's members (with what is held now) and its most recent searches."""
+        c = self._describe(self.collections.require(name))
+        c["searches"] = [
+            {k: r[k] for k in ("id", "at", "query", "profile", "n_hits")}
+            for r in self.memory.recall(collection=name, limit=history)
+        ]
+        return c
+
+    def list_collections(self) -> list[dict[str, Any]]:
+        out = []
+        for name in self.collections.names():
+            c = self.collections.get(name)
+            if c:
+                out.append(
+                    {
+                        "name": name,
+                        "profile": c.get("profile"),
+                        "description": c.get("description", ""),
+                        "members": len(c["members"]),
+                        "updated": c.get("updated"),
+                    }
+                )
+        return out
+
+    def collect(self, name: str, identifiers: Sequence[str], *, via: str = "") -> dict[str, Any]:
+        """Add papers to a collection by any identifier. Held papers are listed by work id; others
+        by the identifier given, until they are fetched. Nothing is downloaded here."""
+        self.collections.require(name)
+        members = {}
+        for i in identifiers:
+            rec = self.lookup(i)
+            if rec:
+                members[rec["work"]] = self._member(rec, via or "collect")
+            else:
+                ident = normalize(i)
+                members[f"{ident.kind}:{ident.value}"] = {"via": via or "collect"}
+        self.collections.add(name, members)
+        return self.collection(name)
+
+    def uncollect(self, name: str, identifiers: Sequence[str]) -> dict[str, Any]:
+        c = self.collections.require(name)
+        keys = []
+        for i in identifiers:
+            rec = self.lookup(i)
+            ident = normalize(i)
+            aliases = {f"{ident.kind}:{ident.value}"}
+            if rec:
+                aliases |= {rec["work"], *self._aliases(rec)}
+            keys += [k for k in c["members"] if k in aliases] or [f"{ident.kind}:{ident.value}"]
+        self.collections.remove(name, keys)
+        return self.collection(name)
+
+    @staticmethod
+    def _aliases(rec: Record) -> list[str]:
+        return [
+            f"{k}:{str(rec[k]).lower()}" for k in ("doi", "pmcid", "pmid", "arxiv") if rec.get(k)
+        ]
+
+    @staticmethod
+    def _member(rec: Record, via: str) -> dict[str, Any]:
+        return {
+            "title": rec.get("title"),
+            "year": rec.get("year"),
+            "doi": rec.get("doi"),
+            "via": via,
+        }
+
+    def _join(self, name: str, rec: Record, via: str) -> None:
+        """List a fetched paper under its work id, replacing any entry by another identifier."""
+        c = self.collections.require(name)
+        stale = [k for k in self._aliases(rec) if k in c["members"]]
+        if stale:
+            self.collections.remove(name, stale)
+        self.collections.add(name, {rec["work"]: self._member(rec, via)})
+
+    def _describe(self, c: dict[str, Any]) -> dict[str, Any]:
+        members = []
+        for key, info in sorted(c["members"].items(), key=lambda kv: kv[1].get("added", "")):
+            rec = self.index().get(key) or self._held_by_key(key)
+            members.append(
+                {
+                    "key": key,
+                    **info,
+                    "work": rec["work"] if rec else None,
+                    "in_library": bool(rec),
+                    "full_text": bool(rec and rec["full_text"]),
+                }
+            )
+        return {
+            "name": c["name"],
+            "profile": c.get("profile"),
+            "description": c.get("description", ""),
+            "created": c.get("created"),
+            "updated": c.get("updated"),
+            "n": len(members),
+            "with_full_text": sum(m["full_text"] for m in members),
+            "members": members,
+        }
 
     # -- catalogue ------------------------------------------------------------------------------
 
@@ -260,12 +438,23 @@ class Library:
 
     # -- fetch ---------------------------------------------------------------------------------
 
-    def fetch(self, identifier: str, *, force: bool = False) -> Record:
+    def fetch(
+        self, identifier: str, *, force: bool = False, collection: str | None = None
+    ) -> Record:
         """Return the paper from the library, or obtain a legal open copy and store it.
 
         The result is a catalogue row plus `from`: "library" | "retrieved" | "not-obtainable";
-        after a network attempt it also carries `attempts` and `refused`.
+        after a network attempt it also carries `attempts` and `refused`. With `collection`, the
+        paper is also listed in that collection (whether or not a copy could be obtained).
         """
+        if collection:
+            self.collections.require(collection)
+        rec = self._fetch(identifier, force=force)
+        if collection:
+            self._join(collection, rec, "fetch")
+        return rec
+
+    def _fetch(self, identifier: str, *, force: bool) -> Record:
         ident = normalize(identifier)
         if not force:
             rec = self.lookup(ident)
@@ -462,6 +651,10 @@ class Library:
         limit: int = 10,
         refresh: bool = False,
         web_fallback: bool | None = None,
+        profile: str | None = None,
+        collection: str | None = None,
+        expand: bool = True,
+        remember: bool = True,
     ) -> dict[str, Any]:
         """Ask every search provider, merge by identifier, and mark what we already hold.
 
@@ -469,23 +662,41 @@ class Library:
         retried without re-spending the ones that succeeded, and a provider that refused us is
         reported by name, never folded into "no results".
 
+        **Profile.** With a discipline `profile` (or a `collection` that has one), a query that
+        uses a synonym is also run with the field's indexed term (`variants`), the profile's
+        providers are used when it names any, and every hit carries `profile_match`: the anchors
+        its title names. Hits that match rank first. See `profiles.py`.
+
+        **Collection and memory.** Every search is remembered (`remember=False` to skip). The
+        result says which past searches were on the same concept (`memory`), and each hit says
+        whether an earlier search already found it (`seen_before`: within the collection, if
+        one is given) and whether the collection lists it (`in_collection`).
+
         **Web fallback.** When the providers above return no open-access hit, the `web` provider
         (SearXNG, opt-in) is asked too, and its report says why it ran. It is skipped, and
         reported `not-needed`, when an open hit already exists. Naming `web` in `providers` runs
         it unconditionally; `web_fallback=False` or PAPER_FETCH_WEB_FALLBACK=0 disables the
         fallback.
         """
+        coll = self.collections.require(collection) if collection else None
+        if profile is None and coll:
+            profile = coll.get("profile")
+        prof = self.profile(profile) if profile else None
+        if providers is None and prof and prof.providers:
+            providers = list(prof.providers)
         provs = (
             build(self.http, openalex_client=self.oa, names=providers, purpose="search")
             if providers is not None
             else self.search_providers
         )
+        queries = prof.expand(query) if prof and expand else [query]
         report: dict[str, dict[str, Any]] = {}
+        variant_reports: dict[str, dict[str, dict[str, Any]]] = {}
         merged: dict[str, dict[str, Any]] = {}
-        for p in provs:
-            self._ask(
-                p, query, oa_only=oa_only, limit=limit, refresh=refresh, into=(report, merged)
-            )
+        for q in queries:
+            rep = report if q == query else variant_reports.setdefault(q, {})
+            for p in provs:
+                self._ask(p, q, oa_only=oa_only, limit=limit, refresh=refresh, into=(rep, merged))
 
         if web_fallback is None:
             web_fallback = os.environ.get("PAPER_FETCH_WEB_FALLBACK", "1") != "0"
@@ -509,8 +720,11 @@ class Library:
                 )
                 report[FALLBACK_SEARCH]["why_ran"] = why_ran
 
+        past = self.memory.entries()
+        seen = self.memory.first_seen(past, collection)
+        members = set(coll["members"]) if coll else set()
         hits = []
-        for m in merged.values():
+        for key, m in merged.items():
             row = next(
                 (
                     r
@@ -522,16 +736,62 @@ class Library:
             )
             if row is None and m["ids"].get("openalex"):
                 row = self.index().get(m["ids"]["openalex"])
-            hits.append(
-                {
-                    **m,
-                    "in_library": bool(row),
-                    "full_text_in_library": bool(row and row["full_text"]),
-                    "work": row["work"] if row else None,
-                }
+            hit = {
+                **m,
+                "key": key,
+                "in_library": bool(row),
+                "full_text_in_library": bool(row and row["full_text"]),
+                "work": row["work"] if row else None,
+                "profile_match": prof.anchors_in(m["title"]) if prof else [],
+                "seen_before": seen.get(key),
+            }
+            if coll:
+                hit["in_collection"] = bool({key, hit["work"]} & members)
+            hits.append(hit)
+        hits.sort(
+            key=lambda h: (
+                -min(len(h["profile_match"]), 1),
+                -len(set(h["providers"])),
+                -(h["year"] or 0),
             )
-        hits.sort(key=lambda h: (-len(set(h["providers"])), -(h["year"] or 0)))
-        return {"query": query, "providers": report, "hits": hits}
+        )
+        similar = self.memory.recall(query, rows=past, collection=None, limit=3)
+        out: dict[str, Any] = {
+            "query": query,
+            "variants": queries[1:],
+            "profile": prof.slug if prof else None,
+            "collection": collection,
+            "providers": report,
+            "hits": hits,
+            "memory": [
+                {
+                    **{k: r.get(k) for k in ("id", "at", "query", "profile", "collection")},
+                    "score": r["score"],
+                    "n_hits": r.get("n_hits"),
+                }
+                for r in similar
+            ],
+        }
+        if variant_reports:
+            out["variant_providers"] = variant_reports
+        if remember:
+            out["search_id"] = self.memory.record(
+                {
+                    "query": query,
+                    "variants": queries[1:],
+                    "concepts": sorted(concepts(query, self.memory.vocabulary)),
+                    "profile": out["profile"],
+                    "collection": collection,
+                    "oa_only": oa_only,
+                    "providers": {n: r["status"] for n, r in report.items()},
+                    "n_hits": len(hits),
+                    "hits": [
+                        {"key": h["key"], "title": h["title"], "year": h["year"], "work": h["work"]}
+                        for h in hits
+                    ],
+                }
+            )["id"]
+        return out
 
     def _ask(
         self,
@@ -594,10 +854,13 @@ class Library:
                     "is_oa": False,
                     "locations": [],
                     "urls": [],
+                    "found_by": [],
                 },
             )
             m["ids"].update({kk: vv for kk, vv in h.ids.items() if vv and not m["ids"].get(kk)})
             m["providers"].append(p.name)
+            if query not in m["found_by"]:
+                m["found_by"].append(query)
             m["is_oa"] = m["is_oa"] or bool(h.is_oa)
             m["locations"] += [f"{loc.provider}:{loc.fmt}" for loc in h.locations]
             if h.extra.get("url"):
@@ -843,4 +1106,7 @@ class Library:
             "network_calls": getattr(self.http, "calls", None),
             "openalex_spent_usd": round(self.oa.spent_usd, 4),
             "openalex_remaining_usd": self.oa.usage.remaining_usd,
+            "collections": len(self.collections.names()),
+            "searches_remembered": len(self.memory.entries()),
+            "profiles": sorted(self.profiles()),
         }

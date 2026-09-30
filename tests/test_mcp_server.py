@@ -103,7 +103,7 @@ def test_search_envelope(lib: Library) -> None:
         FakeProvider("down", raise_=ProviderUnavailable("down rate-limited us (HTTP 429)")),
     ]
     data = srv.search("example", include_closed=True, limit=5)["data"]
-    assert set(data) == {"query", "providers", "hits"}
+    assert {"query", "providers", "hits", "variants", "profile", "memory", "search_id"} <= set(data)
     hit = data["hits"][0]
     for key in (
         "ids",
@@ -205,3 +205,27 @@ def test_stdio_server_speaks_the_contract(tmp_path: Path) -> None:
     assert got["text"]["code"] == "not_found"
     assert got["citations"]["code"] == "tool_error"
     assert {got[k]["code"] for k in ("fetch", "text", "citations")} <= ENVELOPE_CODES
+
+
+def test_profiles_collections_and_recall_tools(lib: Library) -> None:
+    lib.search_providers = [FakeProvider("a", hits=[Hit("a", "Example", 2020, {"doi": DOI}, True)])]
+    listed = srv.profiles()["data"]["profiles"]
+    assert "cardiovascular" in {p["slug"] for p in listed}
+    assert srv.profiles("cardiovascular")["data"]["search_guidance"]
+    _err(srv.profiles("nope"), "tool_error")
+
+    assert srv.create_collection("review", profile="cardiovascular")["data"]["profile"] == (
+        "cardiovascular"
+    )
+    _err(srv.create_collection("Bad Name"), "tool_error")
+    _err(srv.collection("missing"), "tool_error")
+    found = srv.search("example", collection="review")["data"]
+    assert (found["profile"], found["hits"][0]["in_collection"]) == ("cardiovascular", False)
+    assert srv.fetch(DOI, collection="review")["data"]["work"] == "W7"
+    assert srv.collect("review", ["10.5555/other"])["data"]["n"] == 2
+    assert srv.uncollect("review", ["10.5555/other"])["data"]["n"] == 1
+    assert srv.collections()["data"]["collections"][0]["members"] == 1
+    past = srv.recall(query="example", collection="review")["data"]["searches"]
+    assert [s["query"] for s in past] == ["example"]
+    assert past[0]["hits"][0]["full_text_in_library"] is True
+    assert srv.recall(identifier=DOI)["data"]["searches"][0]["id"] == past[0]["id"]

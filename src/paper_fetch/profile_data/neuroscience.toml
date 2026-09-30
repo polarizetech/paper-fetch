@@ -1,0 +1,129 @@
+# The search half of the Neuroscience discipline. Evidence rules (study designs, grading,
+# critique) belong to the application that reads the papers, not here.
+slug = "neuroscience"
+label = "Neuroscience"
+scope = "Nervous system structure and function from ion channels to behaviour: circuits, oscillations, plasticity, neuroimaging and computational models."
+search_guidance = """
+Write queries suited to PubMed and OpenAlex. Name the structure, the signal and the preparation separately (hippocampus, theta rhythm, freely moving rats) rather than asking the question in prose. Expand abbreviations alongside themselves — LTP, LFP and DREADD are each ambiguous on their own — and include one older or alternative term for the structure, since the anatomical nomenclature has changed more than once.
+"""
+examples = ["Does repetitive transcranial magnetic stimulation of motor cortex change motor-evoked potential amplitude?", "Is long-term potentiation necessary for spatial memory formation?", "Do place cells remap when the environment changes shape?"]
+
+[[anchors]]
+system = "mesh"
+label = "Basal Ganglia"
+id = "D001479"
+tree = "A08.186.211.200.885.287.249"
+synonyms = ["striatum", "caudate nucleus", "putamen"]
+
+[[anchors]]
+system = "mesh"
+label = "Hippocampus"
+id = "D006624"
+tree = "A08.186.211.180.405"
+synonyms = ["CA1", "CA3", "dentate gyrus", "hippocampal formation"]
+
+[[anchors]]
+system = "mesh"
+label = "Cerebral Cortex"
+id = "D002540"
+tree = "A08.186.211.200.885.287.500"
+synonyms = ["neocortex", "cortical"]
+
+[[anchors]]
+system = "mesh"
+label = "Nerve Net"
+id = "D009415"
+tree = "A08.511"
+synonyms = ["neural circuit", "neuronal network", "microcircuit"]
+
+[[anchors]]
+system = "mesh"
+label = "Receptors, Neurotransmitter"
+id = "D017981"
+tree = "D12.776.543.750.720"
+synonyms = ["neurotransmitter receptor", "ion channel", "synaptic receptor"]
+
+[[anchors]]
+system = "free-text"
+label = "neural oscillations"
+synonyms = ["delta waves", "theta rhythm", "alpha power", "beta band", "local field potential", "LFP"]
+
+[[anchors]]
+system = "free-text"
+label = "synaptic plasticity"
+synonyms = ["long-term potentiation", "LTP", "long-term depression", "LTD", "spike-timing-dependent plasticity"]
+
+[[anchors]]
+system = "free-text"
+label = "optogenetics"
+synonyms = ["channelrhodopsin", "chemogenetics", "DREADD", "closed-loop stimulation"]
+
+[[measures]]
+label = "Oscillation and firing frequency"
+units = ["Hz", "hertz", "kHz"]
+
+[[measures]]
+label = "Latency and duration"
+units = ["ms", "msec", "s", "min"]
+
+[[measures]]
+label = "Membrane and field potential"
+units = ["mV", "uV", "µV"]
+
+[[measures]]
+label = "Current and conductance"
+units = ["pA", "nA", "nS", "pS"]
+
+[[measures]]
+label = "Drug and ion concentration"
+units = ["uM", "µM", "nM", "mM"]
+
+[[measures]]
+label = "Anatomical distance and coordinates"
+units = ["mm", "um", "µm"]
+
+[[measures]]
+label = "Proportions and changes"
+units = ["%", "percent", "fold"]
+
+[[sources]]
+key = "pubmed"
+label = "PubMed / MEDLINE"
+role = "literature"
+url = "https://pubmed.ncbi.nlm.nih.gov/"
+why = "MeSH-indexed; the A08 nervous-system anatomy tree and the F02 psychological phenomena tree."
+
+[[sources]]
+key = "europepmc"
+label = "Europe PMC"
+role = "literature"
+url = "https://www.ebi.ac.uk/europepmc/webservices/rest/"
+why = "Open-access full text plus MeSH terms in one record."
+
+[[sources]]
+key = "openalex"
+label = "OpenAlex"
+role = "literature"
+url = "https://api.openalex.org/works"
+why = "Venue and open-access metadata, and the citation graph."
+
+[[sources]]
+key = "biorxiv"
+label = "bioRxiv"
+role = "literature"
+url = "https://api.biorxiv.org/"
+why = "The Neuroscience category is among the largest on the server; much of the field appears here first. Preprints are labelled, never excluded."
+
+[[sources]]
+key = "openneuro"
+label = "OpenNeuro"
+role = "dataset"
+url = "https://openneuro.org/"
+why = "Whether the data behind an imaging claim are available at all."
+
+[[sources]]
+key = "neurosynth"
+label = "Neurosynth / NeuroQuery"
+role = "dataset"
+url = "https://neurosynth.org/"
+why = "Coordinate-based meta-analytic maps, as a check on a claimed localisation."

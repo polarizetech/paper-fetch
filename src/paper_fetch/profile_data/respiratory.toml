@@ -1,0 +1,107 @@
+# The search half of the Respiratory science discipline. Evidence rules (study designs, grading,
+# critique) belong to the application that reads the papers, not here.
+slug = "respiratory"
+label = "Respiratory science"
+scope = "Breathing, gas exchange, airway and lung disease, and the chemoreflex control of ventilation, from carotid-body recordings to multicentre ventilation trials."
+search_guidance = """
+Write queries suited to PubMed/MEDLINE, Europe PMC and OpenAlex. Prefer the MeSH term for the condition and name the ventilatory or gas-exchange variable that was actually measured (FEV1, hypercapnic ventilatory response, PaCO2, minute ventilation) rather than the disease alone. Control-of-breathing work is indexed under chemoreception, not under the lung.
+"""
+examples = ["Does carotid body denervation reduce sympathetic activity in hypertension?", "Does slow breathing at six breaths per minute alter the hypercapnic ventilatory response?", "Is respiratory sinus arrhythmia a valid index of cardiac vagal tone during exercise?"]
+
+[[anchors]]
+system = "mesh"
+label = "Respiratory Tract Diseases"
+id = "D012140"
+tree = "C08"
+synonyms = ["respiratory disease", "pulmonary disease"]
+
+[[anchors]]
+system = "mesh"
+label = "Chemoreceptor Cells"
+id = "D002628"
+tree = "A08.675.650.915.500"
+synonyms = ["carotid body", "peripheral chemoreceptors", "central chemoreceptors", "chemoreflex", "hypoxic ventilatory response"]
+
+[[anchors]]
+system = "mesh"
+label = "Respiratory Sinus Arrhythmia"
+id = "D065809"
+tree = "G09.330.380.500.715"
+synonyms = ["cardiorespiratory coupling"]
+
+[[anchors]]
+system = "free-text"
+label = "control of breathing"
+synonyms = ["respiratory rhythm generation", "pre-Botzinger complex", "ventilatory drive", "hypercapnic ventilatory response"]
+
+[[anchors]]
+system = "free-text"
+label = "pulmonary function testing"
+synonyms = ["spirometry", "FEV1", "FVC", "diffusing capacity", "DLCO", "body plethysmography"]
+
+[[anchors]]
+system = "free-text"
+label = "dyspnoea"
+synonyms = ["dyspnea", "breathlessness", "air hunger", "respiratory discomfort"]
+
+[[measures]]
+label = "Lung volumes and flows"
+units = ["L", "mL", "L/min", "L/s"]
+
+[[measures]]
+label = "Blood gas tensions"
+units = ["mmHg", "kPa"]
+
+[[measures]]
+label = "Saturations and predicted fractions"
+units = ["%", "percent"]
+
+[[measures]]
+label = "Respiratory rate"
+units = ["breaths/min", "bpm"]
+
+[[measures]]
+label = "Airway and ventilator pressures"
+units = ["cmH2O", "cm H2O"]
+
+[[sources]]
+key = "pubmed"
+label = "PubMed / MEDLINE"
+role = "literature"
+url = "https://pubmed.ncbi.nlm.nih.gov/"
+why = "MeSH-indexed; the C08 disease tree and the chemoreception descriptors."
+
+[[sources]]
+key = "europepmc"
+label = "Europe PMC"
+role = "literature"
+url = "https://www.ebi.ac.uk/europepmc/webservices/rest/"
+why = "Open-access full text plus MeSH terms in one record."
+
+[[sources]]
+key = "openalex"
+label = "OpenAlex"
+role = "literature"
+url = "https://api.openalex.org/works"
+why = "Venue and open-access metadata, and the citation graph."
+
+[[sources]]
+key = "clinicaltrials"
+label = "ClinicalTrials.gov"
+role = "registry"
+url = "https://clinicaltrials.gov/api/v2/studies"
+why = "Registration and pre-specified endpoints for ventilation and inhaled-therapy trials."
+
+[[sources]]
+key = "ats_ers"
+label = "ATS / ERS official documents"
+role = "guideline"
+url = "https://site.thoracic.org/about-us/news/official-ats-documents"
+why = "Joint statements set the technical standards this field reports against."
+
+[[sources]]
+key = "medrxiv"
+label = "medRxiv"
+role = "literature"
+url = "https://api.biorxiv.org/"
+why = "Preprints are labelled, never excluded."
