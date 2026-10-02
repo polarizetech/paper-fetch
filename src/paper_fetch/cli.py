@@ -223,6 +223,10 @@ def _index(lib: Library, a: argparse.Namespace) -> None:
     )
     for key in r["not_held"]:
         print(f"  not held: {key}")
+    for sk in r["skipped"]:
+        print(f"  skipped: {sk['work']}: {sk['why']}")
+    if r["skipped"]:
+        print(f"{len(r['skipped'])} record(s) skipped; the rest were indexed")
     print(json.dumps(lib.passages.stats()))
 
 
@@ -297,7 +301,9 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
     elif a.cmd == "collection":
         _collection(lib, a)
     elif a.cmd == "collect":
-        (lib.uncollect if a.remove else lib.collect)(a.name, a.ids)
+        res = (lib.uncollect if a.remove else lib.collect)(a.name, a.ids)
+        for bad in res.get("rejected", []):
+            print(f"  rejected: {bad['id']}: {bad['why']}")
         _collection(
             lib, argparse.Namespace(name=a.name, create=False, profile=None, description=None)
         )

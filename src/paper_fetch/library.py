@@ -48,7 +48,7 @@ from typing import Any
 from .citations import DIRECTIONS, OpenCitations
 from .collection import Collections
 from .http import HttpClient
-from .idconv import enrich
+from .idconv import enrich, europepmc_meta
 from .ids import Ident, doi_key, normalize, pmcid_from_openalex
 from .memory import SearchMemory, concepts
 from .openalex import OpenAlex
@@ -272,15 +272,20 @@ class Library:
         by the identifier given, until they are fetched. Nothing is downloaded here."""
         self.collections.require(name)
         members = {}
+        rejected: list[dict[str, str]] = []
         for i in identifiers:
-            rec = self.lookup(i)
+            try:
+                rec = self.lookup(i)
+                ident = None if rec else normalize(i)
+            except ValueError as e:  # one bad id must not fail the whole batch
+                rejected.append({"id": i, "why": str(e)})
+                continue
             if rec:
                 members[rec["work"]] = self._member(rec, via or "collect")
-            else:
-                ident = normalize(i)
+            elif ident:
                 members[f"{ident.kind}:{ident.value}"] = {"via": via or "collect"}
         self.collections.add(name, members)
-        return self.collection(name)
+        return {**self.collection(name), "rejected": rejected}
 
     def uncollect(self, name: str, identifiers: Sequence[str]) -> dict[str, Any]:
         c = self.collections.require(name)
@@ -406,6 +411,7 @@ class Library:
             "unchanged": 0,
             "no_full_text": [],
             "not_held": missing,
+            "skipped": [],
             "passages_added": 0,
         }
         for rec in rows:
@@ -415,7 +421,11 @@ class Library:
             if not refresh and self.passages.has(rec["work"]):
                 report["unchanged"] += 1
                 continue
-            added = self.passages.add(rec, self.text(rec["work"]))
+            try:  # a bad record is skipped and reported, never allowed to stop the run
+                added = self.passages.add(rec, self._text_of(rec))
+            except (ValueError, KeyError, NotFound, OSError) as e:
+                report["skipped"].append({"work": rec["work"], "why": f"{type(e).__name__}: {e}"})
+                continue
             if added:
                 report["indexed"].append(rec["work"])
                 report["passages_added"] += added
@@ -697,15 +707,22 @@ class Library:
             ids[ident.kind] = ident.value
             if ident.kind == "arxiv":
                 ids["doi"] = _arxiv_doi(ident.value)
+            meta = europepmc_meta(ids, self.http)
+            for k in ("doi", "pmid", "pmcid"):
+                if meta and meta[k] and not ids.get(k):
+                    ids[k] = meta[k]
             work = {
                 "id": wid,
                 "doi": ids["doi"],
                 "ids": {},
-                "title": None,
-                "publication_year": None,
-                "authorships": [],
+                "title": meta["title"] if meta else None,
+                "publication_year": meta["year"] if meta else None,
+                "authorships": [
+                    {"author": {"display_name": a}} for a in (meta or {}).get("authors", [])
+                ],
                 "open_access": {},
-                "_note": "OpenAlex has no record; keyed by the identifier it arrived with",
+                "_note": "OpenAlex has no record; keyed by the identifier it arrived with"
+                + ("; title, year and authors from Europe PMC" if meta else ""),
             }
 
         ids, ids_note = enrich(ids, self.http)
@@ -824,7 +841,9 @@ class Library:
 
     def text(self, identifier: str) -> str:
         """The stored, gate-passed full text. Raises NotFound if there is none."""
-        rec = self._held(identifier)
+        return self._text_of(self._held(identifier))
+
+    def _text_of(self, rec: Record) -> str:
         if not rec["full_text"]:
             raise NotFound(f"{rec['work']} has no readable full text (see its provenance)")
         return self.store.get(f"{PREFIX}works/{rec['work']}/{_TEXT[0]}").decode()
