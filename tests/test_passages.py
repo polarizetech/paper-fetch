@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,16 @@ from conftest import make_library
 from paper_fetch import Library
 from paper_fetch import mcp_server as srv
 from paper_fetch.cli import main as cli_main
-from paper_fetch.passages import OllamaEmbedder, Passage, PassageIndex, chunk, clean, fts_query
+from paper_fetch.passages import (
+    CHUNKER,
+    OllamaEmbedder,
+    Passage,
+    PassageIndex,
+    chunk,
+    clean,
+    fts_query,
+    references_start,
+)
 
 DOI = "10.5555/example.001"  # W7 in make_library's OpenAlex fixture
 VOCAB = ["sleep", "memory", "heart", "rate", "exercise", "recall", "spindle", "athlete"]
@@ -285,3 +295,116 @@ def test_passages_carry_their_route(tmp_path: Path) -> None:
     lib = _library(tmp_path)
     paper = lib.paper_passages(DOI)["passages"][0]["paper"]
     assert (paper["route"], paper["format"]) == ("good:pdf", "pdf")
+
+
+# ---------------------------------------------------------------------------------- references
+
+BODY = "\n".join(
+    f"Sentence {i} of the article body reports a result in plain prose." for i in range(60)
+)
+ENTRIES = "\n".join(
+    f"{n} Author{n} AB, Other CD. A study of things, part {n}. J Things {1990 + n}; {n}: 10-19."
+    for n in range(1, 13)
+)
+
+
+def test_a_references_heading_on_its_own_line_ends_the_indexed_text() -> None:
+    for heading in (
+        "References",
+        "REFERENCES",
+        "6. References ",
+        "Literature Cited",
+        "Bibliography:",
+    ):
+        text = f"{BODY}\n{heading}\nSmith J (2001) A paper about things. J Things 4:1-9.\n"
+        cut = references_start(text)
+        assert cut is not None, heading
+        assert text[cut:].lstrip().startswith(heading.strip()[:4]), heading
+        assert all("Smith J (2001)" not in body for _, _, body in chunk(text))
+    # A contents line near the top is not the reference list.
+    early = f"Contents\nReferences\n{BODY}"
+    assert references_start(early) is None
+
+
+def test_a_numbered_reference_list_without_a_heading_is_dropped() -> None:
+    """Text extracted from a PDF often loses the heading. (Found in a live run: a reference entry
+    was retrieved as a passage.)"""
+    text = f"{BODY}\nRunning head 86\n\n{ENTRIES}\n"
+    cut = references_start(text)
+    assert cut is not None
+    assert text[cut:].startswith("1 Author1 AB")
+    assert all("J Things" not in body for _, _, body in chunk(text))
+    for start, end, body in chunk(text):
+        assert text[start:end] == body
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # a short numbered list in the body
+        f"{BODY}\n1 First step taken in 2001.\n2 Second step.\n3 Third step.\n{BODY}",
+        # a long numbered list, but in the first half
+        "\n".join(f"{n} Step {n} of the 2001 protocol." for n in range(1, 13))
+        + f"\n{BODY}\n{BODY}",
+        # a long numbered list at the end, with no years: a list of steps, not of papers
+        f"{BODY}\n" + "\n".join(f"{n} Step number {n} of the protocol." for n in range(1, 13)),
+        # numbering that does not start at 1
+        f"{BODY}\n"
+        + "\n".join(f"{n} Author AB. Title. J Things 2001; 1: 1-9." for n in range(5, 17)),
+    ],
+)
+def test_numbered_lists_that_are_not_bibliographies_are_kept(text: str) -> None:
+    assert references_start(text) is None
+
+
+def test_an_older_chunkers_papers_are_rechunked_and_keep_their_vectors(tmp_path: Path) -> None:
+    calls: list[int] = []
+
+    def counting(texts: list[str]) -> list[list[float]]:
+        calls.append(len(texts))
+        return embed(texts)
+
+    text = f"{BODY}\n\n{ENTRIES}\n"
+    idx = PassageIndex(tmp_path / "p.sqlite", "fake", counting)
+    idx.add(rec("WR"), text)
+    assert idx.has("WR")
+    first = sum(calls)
+    # Make it look like an index written before chunker versions existed.
+    with idx.db:
+        idx.db.execute("delete from chunked")
+    assert not idx.has("WR")
+    assert idx.stats()["stale"] == 1
+    calls.clear()
+    assert idx.add(rec("WR"), text) > 0  # same text, re-chunked
+    assert sum(calls) == 0  # every passage was already embedded
+    assert idx.has("WR")
+    assert idx.stats()["stale"] == 0
+    assert first > 0
+    assert CHUNKER >= 2
+
+
+def test_an_index_from_before_chunker_versions_is_migrated(tmp_path: Path) -> None:
+    path = tmp_path / "old.sqlite"
+    idx = PassageIndex(path, "fake", embed)
+    idx.add(rec("WA"), PAPER_A)
+    idx.close()
+    db = sqlite3.connect(path)
+    db.execute("drop table chunked")
+    db.commit()
+    db.close()
+    reopened = PassageIndex(path, "fake", embed)
+    assert reopened.stats()["stale"] == 1
+    assert reopened.add(rec("WA"), PAPER_A) > 0
+    assert reopened.has("WA")
+
+
+def test_a_paper_reindexed_by_an_older_server_counts_as_stale_again(tmp_path: Path) -> None:
+    """Servers running the previous code share the file. They rewrite a paper's row without the
+    version note, and must not inherit the note of the row they replaced."""
+    idx = PassageIndex(tmp_path / "p.sqlite", "fake", embed)
+    idx.add(rec("WA"), PAPER_A)
+    assert idx.has("WA")
+    with idx.db:  # what the previous code does on re-index: a new row, a new indexed_at
+        idx.db.execute("update papers set indexed_at = '2020-01-01T00:00:00Z' where work = 'WA'")
+    assert not idx.has("WA")
+    assert idx.stats()["stale"] == 1

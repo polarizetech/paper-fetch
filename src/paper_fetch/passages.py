@@ -54,6 +54,16 @@ __all__ = [
     "index_path",
 ]
 
+#: The version of `chunk`. A paper indexed by an older one is re-chunked the next time it is
+#: indexed (its unchanged passages keep their vectors). 2: reference lists without a heading
+#: paragraph are recognised and dropped.
+#:
+#: The version is kept in its own table, `chunked`, beside the `indexed_at` of the paper row it
+#: describes, and the `papers` table is unchanged: servers still running the previous code share
+#: this file and keep working, and a paper one of them re-indexes simply counts as version 1
+#: again (its row has a new `indexed_at`, so the old note no longer matches).
+CHUNKER = 2
+
 SCHEMA = """
 create table if not exists meta (key text primary key, value text);
 create table if not exists papers (
@@ -69,6 +79,9 @@ create index if not exists passages_work on passages(work);
 create virtual table if not exists passages_fts
     using fts5(text, content='passages', content_rowid='id');
 create table if not exists vectors (passage_id integer primary key, vec blob not null);
+create table if not exists chunked (
+    work text primary key, version integer not null, indexed_at text not null
+);
 """
 
 #: Zero-width, bidirectional-control and invisible formatting characters: used to hide text from
@@ -77,6 +90,15 @@ HIDDEN = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
 REFERENCES_HEADING = re.compile(
     r"^\s*(references|bibliography|literature cited|works cited)\s*$", re.I
 )
+# The same heading on a line of its own inside a paragraph, optionally numbered ("7. References").
+REFERENCES_LINE = re.compile(
+    r"(?im)^[ \t]*(?:\d{1,2}\.?[ \t]+)?(references|bibliography|literature cited|works cited|"
+    r"reference list)[ \t]*:?[ \t]*$"
+)
+# A numbered bibliography entry at the start of a line: "12 Dias da Silva VJ", "[3] Smith".
+NUMBERED_ENTRY = re.compile(r"(?m)^[ \t]*\[?(\d{1,3})[\].)]?[ \t]+(?=[A-Z])")
+YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
+MIN_ENTRIES = 8  # a shorter numbered run is more likely a list in the body than a bibliography
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9(\[])")
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-]+")
 STOPWORDS = frozenset({
@@ -94,14 +116,47 @@ def clean(text: str) -> tuple[str, int]:
     return HIDDEN.sub("", text), len(HIDDEN.findall(text))
 
 
+def references_start(text: str) -> int | None:
+    """Where the reference list begins, or None if none is recognised.
+
+    Two signals, both conservative. A heading on a line of its own ("References", "7. References")
+    past the first third of the text. Or, for text extracted from a PDF, where the heading is often
+    lost: a run of consecutively numbered entries that starts at 1, has at least MIN_ENTRIES
+    entries, begins in the second half of the text, runs to its last tenth, and mostly carries
+    publication years. A numbered list in the body fails at least one of those.
+    """
+    heading = next(
+        (m.start() for m in REFERENCES_LINE.finditer(text) if m.start() > len(text) / 3), None
+    )
+    best: tuple[int, int] | None = None  # (entries, start of entry 1)
+    run: list[int] = []  # start offsets of the entries of the current run
+    expect = 1
+    entries = [(m.start(), int(m.group(1))) for m in NUMBERED_ENTRY.finditer(text)]
+    for at, number in [*entries, (len(text), -1)]:
+        if number == expect:
+            run.append(at)
+            expect += 1
+            continue
+        if len(run) >= MIN_ENTRIES and run[0] > len(text) / 2 and run[-1] > len(text) * 0.9:
+            spans = zip(run, [*run[1:], len(text)], strict=True)
+            dated = sum(bool(YEAR.search(text[a:b])) for a, b in spans)
+            if dated >= len(run) / 2 and (best is None or len(run) > best[0]):
+                best = (len(run), run[0])
+        run, expect = ([at], 2) if number == 1 else ([], 1)
+    starts = [x for x in (heading, best[1] if best else None) if x is not None]
+    return min(starts) if starts else None
+
+
 def chunk(text: str, target: int = 1100, hard_max: int = 1600) -> list[tuple[int, int, str]]:
     """Split text into (start, end, passage) on paragraph, then sentence, boundaries.
 
-    `text[start:end] == passage` always holds. Everything from a references heading on is dropped.
+    `text[start:end] == passage` always holds. The reference list is dropped (`references_start`).
     """
+    cut = references_start(text)
+    body = text if cut is None else text[:cut]
     spans: list[tuple[int, int]] = []
     pos = 0
-    for para in re.split(r"(\n\s*\n)", text):
+    for para in re.split(r"(\n\s*\n)", body):
         start, pos = pos, pos + len(para)
         if not para.strip():
             continue
@@ -112,7 +167,7 @@ def chunk(text: str, target: int = 1100, hard_max: int = 1600) -> list[tuple[int
             continue
         cursor = start
         for piece in SENTENCE_END.split(para):
-            at = text.find(piece, cursor, pos)
+            at = body.find(piece, cursor, pos)
             if at < 0:
                 continue
             spans.append((at, at + len(piece)))
@@ -254,8 +309,17 @@ class PassageIndex:
     # -- writing -------------------------------------------------------------------------------
 
     def has(self, work: str, text_sha256: str | None = None) -> bool:
-        row = self.db.execute("select text_sha256 from papers where work=?", (work,)).fetchone()
-        return bool(row) and (text_sha256 is None or row[0] == text_sha256)
+        """Whether the work is indexed by the current chunker (and, if given, from this text)."""
+        row = self.db.execute(
+            "select p.text_sha256, c.version from papers p left join chunked c "
+            "on c.work = p.work and c.indexed_at = p.indexed_at where p.work=?",
+            (work,),
+        ).fetchone()
+        return (
+            bool(row)
+            and (row[1] or 1) == CHUNKER
+            and (text_sha256 is None or row[0] == text_sha256)
+        )
 
     def add(self, record: dict[str, Any], raw_text: str, batch: int = 16) -> int:
         """Index one paper's full text; replaces an earlier copy. Returns passages added."""
@@ -267,10 +331,22 @@ class PassageIndex:
         pieces = chunk(text)
         vectors: list[bytes | None] = [None] * len(pieces)
         if self.embed is not None and self._np is not None:
-            vecs: list[list[float]] = []
-            for i in range(0, len(pieces), batch):
-                vecs.extend(self.embed([p[2] for p in pieces[i : i + batch]]))
-            vectors = [_normalise(self._np, v).tobytes() for v in vecs]
+            # Passages this work already has, word for word, keep their vectors: re-chunking a
+            # paper (a new chunker, an erratum appended) embeds only what is new.
+            known = dict(
+                self.db.execute(
+                    "select p.text, v.vec from passages p join vectors v on v.passage_id = p.id "
+                    "where p.work=?",
+                    (work,),
+                )
+            )
+            vectors = [known.get(p[2]) for p in pieces]
+            todo = [i for i, v in enumerate(vectors) if v is None]
+            for at in range(0, len(todo), batch):
+                group = todo[at : at + batch]
+                vecs = self.embed([pieces[i][2] for i in group])
+                for i, v in zip(group, vecs, strict=True):
+                    vectors[i] = _normalise(self._np, v).tobytes()
         with self.db:
             # Take the write lock before reading what to replace, so a concurrent writer cannot
             # commit this work between the check and the delete.
@@ -278,6 +354,7 @@ class PassageIndex:
             if self.has(work, digest):
                 return 0
             self._remove(work)
+            indexed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             self.db.execute(
                 "insert into papers values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
@@ -296,8 +373,11 @@ class PassageIndex:
                     digest,
                     len(text),
                     hidden,
-                    time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    indexed_at,
                 ),
+            )
+            self.db.execute(
+                "insert or replace into chunked values (?,?,?)", (work, CHUNKER, indexed_at)
             )
             for ord_, ((start, end, body), vec) in enumerate(zip(pieces, vectors, strict=True)):
                 cur = self.db.execute(
@@ -327,6 +407,7 @@ class PassageIndex:
             self.db.execute("delete from vectors where passage_id=?", (pid,))
         self.db.execute("delete from passages where work=?", (work,))
         self.db.execute("delete from papers where work=?", (work,))
+        self.db.execute("delete from chunked where work=?", (work,))
 
     # -- reading -------------------------------------------------------------------------------
 
@@ -358,6 +439,13 @@ class PassageIndex:
             "papers": one("select count(*) from papers").fetchone()[0],
             "passages": one("select count(*) from passages").fetchone()[0],
             "with_vectors": one("select count(*) from vectors").fetchone()[0],
+            # Papers chunked by an older chunker; `paper-fetch index --refresh` brings them up.
+            "stale": one(
+                "select count(*) from papers p left join chunked c "
+                "on c.work = p.work and c.indexed_at = p.indexed_at "
+                "where coalesce(c.version, 1) != ?",
+                (CHUNKER,),
+            ).fetchone()[0],
             "embedding_model": self.model or None,
             "path": str(self.path),
         }

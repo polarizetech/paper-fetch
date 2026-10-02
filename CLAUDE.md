@@ -67,7 +67,16 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
   ONNX (`PAPER_FETCH_RERANK_MODEL`). Both are deterministic: vectors and scores, never text. An
   index refuses a different embedding model. `retrieve` indexes its scope on demand; a passage
   id `<work>#p<ord>` survives rebuilds. The model-based reranker and the prompt-injection scan
-  stay in the application: they concern a model reading the text. Measured with bge-m3:
+  stay in the application: they concern a model reading the text. **The reference list is not
+  indexed**, found two ways (`references_start`): a heading on a line of its own past the first
+  third of the text, or, for PDF text that lost its heading, a run of at least 8 consecutively
+  numbered entries from 1 that starts in the second half, reaches the last tenth and mostly
+  carries years. Measured on 80 held papers: 11 of 12 PDFs had an unrecognised list (the old rule
+  needed a paragraph that was exactly "References"); every cut read was correct; XML sources were
+  unaffected. An unnumbered author-year list with no heading is still not recognised. The chunker
+  has a version (`CHUNKER`, in a `chunked` table so the `papers` table is unchanged for servers
+  still running older code); `paper-fetch index` re-chunks stale papers and reuses the vectors of
+  passages whose text did not change. Measured with bge-m3:
   15 papers → 1,405 passages in 94 s; a query then takes ~10 ms.
 
 ## ⭐ Over MCP
