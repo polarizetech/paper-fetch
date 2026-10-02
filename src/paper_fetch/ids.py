@@ -50,18 +50,31 @@ def _strip_prefix(s: str, prefixes: tuple[str, ...]) -> str:
     return s
 
 
+_KEYED = re.compile(r"^(doi|pmcid|pmid|arxiv)-(.+)$", re.I)
+
+
 def normalize(identifier: str) -> Ident:
     """Parse a DOI, OpenAlex ID, `pmid:N`, PMCID or `arxiv:ID` into its canonical `Ident`.
+
+    Also accepts the work ids the library itself mints when OpenAlex has no record
+    (`doi-10.1214%2F12-aoas565supp`, `pmcid-PMC5519140`, `pmid-123`, `arxiv-...`): a work the
+    library created must be accepted by every command that takes a work id.
 
     Raises ValueError for anything else, including a bare number.
     """
     s = (identifier or "").strip()
     if not s:
         raise ValueError("empty identifier")
+    keyed = _KEYED.match(s)
+    if keyed:
+        kind, rest = keyed.group(1).lower(), urllib.parse.unquote(keyed.group(2))
+        s = f"{kind}:{rest}" if kind in ("pmid", "arxiv") else rest
     s = _strip_prefix(s, ("https://openalex.org/", "http://openalex.org/", "openalex:"))
     if _W.match(s):
         return Ident("openalex", "W" + s[1:])
     s = _strip_prefix(s, ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "doi:"))
+    if re.match(r"^10\.\d{4,9}%2F", s, re.I):  # a DOI as one object-key segment (doi_key)
+        s = urllib.parse.unquote(s)
     low = s.lower()
     if _DOI.match(s):
         return Ident("doi", low.rstrip(".,;"))

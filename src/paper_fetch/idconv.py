@@ -56,3 +56,42 @@ def enrich(ids: dict[str, Any], http: HttpClient) -> tuple[dict[str, Any], str]:
             out[k] = str(v).lower() if k == "doi" else str(v)
             filled.append(k)
     return out, f"ncbi idconv filled {', '.join(filled)}" if filled else "ncbi idconv: nothing new"
+
+
+EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+
+
+def europepmc_meta(ids: dict[str, Any], http: HttpClient) -> dict[str, Any] | None:
+    """Title, year, first authors and ids for a paper OpenAlex does not know, from Europe PMC.
+
+    Looked up by PMCID, else DOI, else PMID. None when nothing is found or the service fails:
+    never fatal.
+    """
+    if ids.get("pmcid"):
+        q = f"PMCID:{ids['pmcid']}"
+    elif ids.get("doi"):
+        q = f'DOI:"{ids["doi"]}"'
+    elif ids.get("pmid"):
+        q = f"EXT_ID:{ids['pmid']} AND SRC:MED"
+    else:
+        return None
+    params = urllib.parse.urlencode({"query": q, "format": "json", "resultType": "core"})
+    try:
+        r = http.get(f"{EPMC}?{params}", timeout=15, retries=1)
+        if r.status != 200:
+            return None
+        rows = json.loads(r.body).get("resultList", {}).get("result", [])
+    except Exception:  # noqa: BLE001 -- enrichment is never fatal
+        return None
+    if not rows:
+        return None
+    x = rows[0]
+    year = str(x.get("pubYear") or "")
+    return {
+        "title": x.get("title"),
+        "year": int(year) if year.isdigit() else None,
+        "authors": [a for a in (x.get("authorString") or "").rstrip(".").split(", ")[:3] if a],
+        "doi": (x.get("doi") or "").lower() or None,
+        "pmid": x.get("pmid"),
+        "pmcid": x.get("pmcid"),
+    }
