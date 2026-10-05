@@ -49,6 +49,15 @@ class HttpClient(Protocol):
         retries: int | None = None,
     ) -> Response: ...
 
+    def post(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Response: ...
+
 
 @dataclass
 class Http:
@@ -104,6 +113,42 @@ class Http:
             if attempt + 1 < tries:
                 time.sleep(0.8 * (attempt + 1))
         raise ConnectionError(f"GET {url} failed after {tries} attempts: {last}")
+
+    def post(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Response:
+        """POST a body and return the answer, 4xx included. One attempt: a POST is not retried
+        blindly, and the caller decides what a 401 or a 429 means (as with `get`)."""
+        req = urllib.request.Request(url, body, {"User-Agent": user_agent(), **(headers or {})})
+        with self._lock:
+            self.calls += 1
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r:
+                data = r.read()
+                with self._lock:
+                    self.bytes_in += len(data)
+                    self.log.append((url, r.status, len(data)))
+                return Response(
+                    r.status, {k.lower(): v for k, v in r.headers.items()}, data, r.geturl()
+                )
+        except urllib.error.HTTPError as e:
+            data = e.read() if e.fp is not None else b""
+            with self._lock:
+                self.log.append((url, e.code, len(data)))
+            if e.code < 500:
+                return Response(
+                    e.code, {k.lower(): v for k, v in (e.headers or {}).items()}, data, url
+                )
+            raise ConnectionError(f"POST {url} failed: HTTP {e.code}") from e
+        except OSError as e:
+            with self._lock:
+                self.log.append((url, None, 0))
+            raise ConnectionError(f"POST {url} failed: {e}") from e
 
     def post_json(self, url: str, payload: Any, *, timeout: float | None = None) -> Any:
         """POST a JSON body and return the decoded JSON answer. One attempt; for local services

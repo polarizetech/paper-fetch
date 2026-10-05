@@ -1097,6 +1097,9 @@ class Library:
             m["locations"] += [f"{loc.provider}:{loc.fmt}" for loc in h.locations]
             if h.extra.get("url"):
                 m["urls"].append(h.extra["url"])
+            if p.name == "scite":  # how the paper has been cited, and any editorial notice
+                keep = ("tally", "oa_status", "editorial_notices")
+                m["scite"] = {kk: h.extra[kk] for kk in keep if h.extra.get(kk)}
             m["title"] = m["title"] or h.title
             m["year"] = m["year"] or h.year
 
