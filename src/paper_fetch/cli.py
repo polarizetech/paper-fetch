@@ -16,6 +16,7 @@
     paper-fetch verify <id>                              re-hash stored files against provenance
     paper-fetch add <file.pdf> <id> --rights "..."       a copy you legitimately hold
     paper-fetch citations <id> [--references] [-n N]     who cites it (or what it cites)
+    paper-fetch scite-login | scite-logout               sign this machine in to scite (browser)
     paper-fetch status | rebuild-index | adopt-orphans
 
 `python -m paper_fetch ...` is the same program.
@@ -29,6 +30,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
+from . import scite_auth
 from .citations import CitationsUnavailable
 from .config import load_env
 from .library import Library, NotFound
@@ -114,6 +116,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-n", type=int, default=25)
     p.add_argument("--refresh", action="store_true")
 
+    sub.add_parser(
+        "scite-login", help="sign in to scite in the browser (enables the scite provider)"
+    )
+    sub.add_parser("scite-logout", help="forget this machine's scite sign-in")
     sub.add_parser("status")
     sub.add_parser("rebuild-index")
     sub.add_parser("adopt-orphans")
@@ -327,6 +333,11 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         print(json.dumps(lib.add_local(a.path, a.id, rights=a.rights), indent=1))
     elif a.cmd == "citations":
         _citations(lib, a)
+    elif a.cmd == "scite-login":
+        path = scite_auth.login(lib.oa.http)
+        print(f"signed in to scite; sign-in stored at {path} (0600)")
+    elif a.cmd == "scite-logout":
+        print("scite sign-in removed" if scite_auth.logout() else "no scite sign-in on file")
     elif a.cmd == "status":
         print(json.dumps(lib.status(), indent=1))
     elif a.cmd == "rebuild-index":

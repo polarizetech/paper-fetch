@@ -1,6 +1,6 @@
 # CLAUDE.md — paper-fetch
 
-**One private, deduplicated library of open-access full texts, found through TWELVE swappable
+**One private, deduplicated library of open-access full texts, found through THIRTEEN swappable
 providers plus a web-search fallback, stored in a local directory or any S3-compatible bucket, and
 checked before anything is downloaded.** A paper retrieved once is never retrieved again, by any
 project, on any machine that shares the store.
@@ -119,7 +119,7 @@ providers interchangeable. Choose them by name, no code change:
 
 ```bash
 PAPER_FETCH_PROVIDERS=pmc-s3,europepmc,plos,openalex,biorxiv,openaire,hal,osf,core,unpaywall   # locate order
-PAPER_FETCH_SEARCH_PROVIDERS=openalex,europepmc,pubmed,openaire,plos,osf,hal,doaj,core          # search set
+PAPER_FETCH_SEARCH_PROVIDERS=openalex,europepmc,pubmed,openaire,plos,osf,hal,doaj,core,scite    # search set
 ```
 
 Those are the defaults. An **unknown name raises** with the known list — a typo that silently
@@ -137,6 +137,7 @@ provider named in the search set (or the reverse) also raises.
 | `osf` | ✓ via SHARE (PsyArXiv and other OSF servers) | `osf.io/<id>/download` when the preprint is CC-licensed | — | SHARE's `identifier` filter returned 0 for a DOI it holds, `sameAs` finds it; OSF's own v2 API 502s, so it is not used |
 | `hal` | ✓ file records only | `fileMain_s` when `openAccess_bool` | — | licence is often HAL's deposit authorisation, which permits reading, not reuse |
 | `doaj` | ✓ search only | — (links are landing pages) | — | finds papers other indexes miss; copies then come through other providers |
+| `scite` | ✓ search only, via its MCP server | — never a copy source | a sign-in (`paper-fetch scite-login`), no key | 210M+ papers searched through citing sentences; hits carry tallies and editorial notices; skipped until signed in; not cached |
 | `core` | ✓ | repository PDF | optional `CORE_API_KEY` | 17.5 M records; 10 req/window; **no licence field** |
 | `biorxiv` | — (API has no keyword search: 404) | JATS + licence by DOI | — | |
 | `unpaywall` | — | best OA PDF | `PAPER_FETCH_EMAIL` | sometimes knows no open copy that OpenAIRE finds in a repository |
@@ -195,6 +196,35 @@ then raised a generic `ConnectionError`, so no provider ever saw the rate limit,
 search reported rate-limited providers as `error` and took **2 minutes**. A 429 (any 4xx) is now
 returned on the first attempt and becomes `unavailable`; providers carry a 20 s timeout and one
 retry. And OpenAlex lacking a PMCID (above) had been silently skipping the best route.
+
+## ⭐ scite — through its MCP server, with the subscriber's sign-in
+
+`providers/scite.py` and `scite_auth.py`. scite's REST search (`/api_partner/search`) answers
+**401** without a partner token, which comes from their sales team, not with a subscription. Its
+MCP server (`https://api.scite.ai/mcp`) takes the subscriber's own sign-in instead: OAuth 2.1 with
+open dynamic client registration, a public client (`token_endpoint_auth_method: none`), PKCE S256
+and the scopes `mcp offline_access`. So the provider is a small MCP client, written against
+`Http` (the `mcp` SDK is not a core dependency and would open its own sockets): `initialize`,
+`notifications/initialized`, then `tools/call search_literature`.
+
+- **`paper-fetch scite-login`** registers this machine, opens the browser, receives the redirect
+  on a loopback port and stores `scite-oauth.json` beside the `*.env` files, 0600. **Never in the
+  store**: a bucket is shared; a sign-in is one person's. `scite-logout` deletes it.
+- **Measured 2026-10-05:** the access token lasts **15 minutes** and the **refresh token rotates on
+  every use**. Processes share the file, so it is re-read before a refresh and once more after a
+  refused one (another process may have just spent the token). A search is 3 POSTs on a new
+  session (3.7 s for 5 hits), 1 after; answers came back as plain JSON, and an event stream is
+  read too.
+- **Search only.** A hit keeps DOI, title, year, three authors, scite's `isOa`/`oaStatus`, the
+  tally and editorial notices. **Its access links are dropped: they carry the account's email
+  address** and route to a document-delivery service; abstracts and citation statements are
+  dropped too. `oa_only` asks for three times `limit` (capped at 50, since every hit carries a
+  citation list) and drops what scite marks closed, because the tool has no open-access filter.
+- **Not cached** (`cacheable = False`): scite's terms on storing results in a shared store are
+  unchecked. The search memory still records which DOIs a search returned, as for any provider.
+- **In the default search set, skipped until signed in** (`available()` reads only the file). An
+  expired sign-in, a 429 or a tool error is `unavailable` and says what to do.
+- A merged hit carries `scite` (tally, `oa_status`, `editorial_notices`) when scite found it.
 
 ## ⭐ The citation graph — OpenCitations
 
@@ -327,7 +357,9 @@ and one write, and the authoritative per-work objects repair any row lost in it
   converter now supplies the DOI/PMID first. `Library.adopt_orphans()` (`paper-fetch
   adopt-orphans`) moves such orphans onto their OpenAlex ids; it deletes an orphan's objects only
   after its copy is in place, through the stores' `delete()`.
-- **No citation intent** (supporting or contrasting); OpenAlex and OpenCitations do not supply it.
+- **Citation intent is counts only, and only from scite.** A hit scite found carries its tally
+  (supporting / contrasting / mentioning); the citing statements themselves are not kept, and
+  `lib.citations()` (OpenCitations) still gives links without stance.
 - **Profile ranking and recall are lexical.** Profile ranking uses titles only (providers return no
   abstracts), and recall matches words, not meaning: "memory consolidation" and "sleep-dependent
   learning" are different concepts to it unless a profile declares one a synonym of the other.

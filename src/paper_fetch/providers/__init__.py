@@ -22,6 +22,7 @@ from .adapters import PMCS3, Biorxiv, Core, EuropePMC, OpenAlexProvider, PubMed,
 from .base import Hit, Ids, Location, Provider, ProviderUnavailable, clean_doi
 from .openaire import OpenAIRE
 from .repositories import DOAJ, HAL, OSF, PLOS
+from .scite import Scite
 from .web import WebSearch
 
 __all__ = [
@@ -39,6 +40,7 @@ __all__ = [
     "OpenAIRE",
     "Provider",
     "ProviderUnavailable",
+    "Scite",
     "WebSearch",
     "build",
     "clean_doi",
@@ -60,6 +62,7 @@ REGISTRY: dict[str, type[Provider]] = {
         OSF,
         HAL,
         DOAJ,
+        Scite,
         WebSearch,
     )
 }
@@ -86,7 +89,9 @@ DEFAULT_SEARCH = (
     "hal",
     "doaj",
     "core",
+    "scite",
 )
+# `scite` is skipped until someone signs in (`paper-fetch scite-login`).
 # `web` is not in the default set: it runs as a FALLBACK (Library.search) when the set above finds
 # no open-access hit, or when named explicitly. PAPER_FETCH_WEB_FALLBACK=0 turns the fallback off.
 FALLBACK_SEARCH = "web"

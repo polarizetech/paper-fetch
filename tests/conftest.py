@@ -89,6 +89,7 @@ class FakeHttp:
         self.calls = 0
         self.log: list[str] = []
         self.headers: list[dict[str, str]] = []
+        self.posts: list[tuple[str, bytes]] = []
 
     def get(
         self,
@@ -106,11 +107,26 @@ class FakeHttp:
                 return resp(url) if callable(resp) else resp
         return Response(404, {}, b"", url)
 
+    def post(
+        self,
+        url: str,
+        body: bytes,
+        headers: dict[str, str] | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> Response:
+        """Served from the same routes as `get`; the body is kept in `posts`."""
+        self.posts.append((url, body))
+        return self.get(url, headers)
+
 
 class DeadHttp:
     calls = 0
 
     def get(self, *_a: Any, **_k: Any) -> Response:
+        raise ConnectionError("timed out")
+
+    def post(self, *_a: Any, **_k: Any) -> Response:
         raise ConnectionError("timed out")
 
 

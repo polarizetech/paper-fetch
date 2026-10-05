@@ -175,7 +175,8 @@ stored verbatim. This is the only way a non-open-access paper enters the library
 
 ## What it does not do
 
-- Citation intent (supporting / contrasting) — use scite. `lib.citations()` gives the links, not the stance.
+- Citation statements with their intent (supporting / contrasting) — use scite itself. A search hit
+  scite found carries its tally under `scite`; `lib.citations()` gives the links, not the stance.
 - Titles for citation-graph rows — OpenCitations returns identifiers only; `fetch()` or search for the rest.
 - Query Google Scholar — it has no API and its terms forbid automated querying.
 - Download anything a web search found — a web hit is a lead; its parsed DOI goes through `fetch()`.

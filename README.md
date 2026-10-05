@@ -139,13 +139,31 @@ those files out of repositories (`chmod 600`).
 | `unpaywall` | | yes | Needs `PAPER_FETCH_EMAIL`. |
 | `pubmed` | yes | | Finds papers and PMCIDs; PMC routes hold the copies. |
 | `doaj` | yes | | Search only (its full-text links are landing pages). |
+| `scite` | yes | | Needs a scite subscription and one sign-in: `paper-fetch scite-login`. Search only; hits carry citation tallies. Not cached. |
 | `web` | fallback | | SearXNG; identifiers are parsed from URLs and never trusted as open. |
 
 Default locate order: `pmc-s3, europepmc, plos, openalex, biorxiv, openaire, hal, osf, core,
 unpaywall`. Default search set: `openalex, europepmc, pubmed, openaire, plos, osf, hal, doaj,
-core`, with `web` asked only when none of those returns an open-access hit. NCBI's ID converter
+core, scite`, with `scite` skipped until someone signs in and `web` asked only when none of those
+returns an open-access hit. NCBI's ID converter
 fills in missing PMCIDs/PMIDs before providers are asked, and OpenCitations answers the citation
 graph. `paper-fetch providers` lists what is enabled and what each needs, without touching the network.
+
+### scite
+
+[scite](https://scite.ai) is searched through its MCP server, with your own subscription: there is
+no API key. Sign in once per machine:
+
+```bash
+paper-fetch scite-login     # opens the browser; stores the sign-in in ~/.config/paper-fetch/scite-oauth.json (0600)
+paper-fetch scite-logout    # forget it
+```
+
+After that `scite` answers in every search, the MCP server included, and the sign-in renews itself.
+A merged hit that scite found carries `scite`: its tally (`supporting`, `contrasting`,
+`mentioning`, `citingPublications`), scite's open-access status and any editorial notice
+(retraction, correction, concern). scite is search-only: copies still come through the
+open-access routes above, and its access links, abstracts and citation statements are not kept.
 
 ## Command line
 
@@ -166,6 +184,7 @@ paper-fetch provenance <id>
 paper-fetch verify <id>                # re-hash stored files against their recorded sha256
 paper-fetch add <file.pdf> <id> --rights "..."
 paper-fetch citations <id> [--references] [-n N] [--refresh]
+paper-fetch scite-login | scite-logout  # sign this machine in to scite, in the browser
 paper-fetch status | rebuild-index | adopt-orphans
 ```
 
