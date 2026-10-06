@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.parse
 from collections.abc import Sequence
@@ -151,6 +152,11 @@ class Library:
         self._search_providers = list(search_providers) if search_providers is not None else None
         self.retry_after_days = retry_after_days
         self.search_ttl_days = search_ttl_days
+        # One Library serves every tool call of an MCP server, each on its own worker thread.
+        # This lock guards the in-memory catalogue and the lazily built parts. It is held for
+        # dictionary work and for the catalogue's own read and write, never for a fetch or a
+        # search: readers take a snapshot (`_rows`), writers go through `_record` / `_forget`.
+        self._lock = threading.RLock()
         self._index: dict[str, Record] | None = None
         self._loaded: dict[str, str] = {}  # the catalogue as last read, to tell what we changed
         self.opencitations = OpenCitations(self.http)
@@ -180,9 +186,10 @@ class Library:
 
     def profiles(self) -> dict[str, Profile]:
         """Every discipline profile: built-in, then the operator's (see `profiles.py`)."""
-        if self._profiles is None:
-            self._profiles = load_profiles()
-        return self._profiles
+        with self._lock:
+            if self._profiles is None:
+                self._profiles = load_profiles()
+            return self._profiles
 
     def profile(self, slug: str) -> Profile:
         known = self.profiles()
@@ -192,9 +199,10 @@ class Library:
 
     @property
     def memory(self) -> SearchMemory:
-        if self._memory is None:
-            self._memory = SearchMemory(self.store, vocabulary(self.profiles()))
-        return self._memory
+        with self._lock:
+            if self._memory is None:
+                self._memory = SearchMemory(self.store, vocabulary(self.profiles()))
+            return self._memory
 
     def recall(
         self,
@@ -352,10 +360,11 @@ class Library:
     @property
     def passages(self) -> PassageIndex:
         """The local passage index (see `passages.py`), opened on first use."""
-        if self._passages is None:
-            model, embed = embedder_from_env()
-            self._passages = PassageIndex(index_path(), model, embed)
-        return self._passages
+        with self._lock:
+            if self._passages is None:
+                model, embed = embedder_from_env()
+                self._passages = PassageIndex(index_path(), model, embed)
+            return self._passages
 
     @passages.setter
     def passages(self, value: PassageIndex | None) -> None:
@@ -363,9 +372,10 @@ class Library:
 
     @property
     def reranker(self) -> Reranker | None:
-        if not self._reranker_built:
-            self._reranker, self._reranker_built = reranker_from_env(), True
-        return self._reranker
+        with self._lock:
+            if not self._reranker_built:
+                self._reranker, self._reranker_built = reranker_from_env(), True
+            return self._reranker
 
     @reranker.setter
     def reranker(self, value: Reranker | None) -> None:
@@ -405,7 +415,7 @@ class Library:
         each text and re-indexes only those whose text changed."""
         rows, missing = self._scope(identifiers, collection)
         if rows is None:
-            rows = list(self.index().values())
+            rows = self._rows()
         report: dict[str, Any] = {
             "indexed": [],
             "unchanged": 0,
@@ -567,10 +577,29 @@ class Library:
     # same instant can still race; that window is the time between one read and one write.
 
     def index(self, refresh: bool = False) -> dict[str, Record]:
-        if self._index is None or refresh:
-            self._index = self._read_catalogue()
-            self._loaded = {w: _canon(r) for w, r in self._index.items()}
-        return self._index
+        """The catalogue, keyed by work. Look a work up in it freely; to walk it, use `_rows()`:
+        another thread may add to it while you iterate."""
+        with self._lock:
+            if self._index is None or refresh:
+                self._index = self._read_catalogue()
+                self._loaded = {w: _canon(r) for w, r in self._index.items()}
+            return self._index
+
+    def _rows(self) -> list[Record]:
+        """A snapshot of every catalogue row, safe to iterate while other threads write."""
+        with self._lock:
+            return list(self.index().values())
+
+    def _record(self, wid: str, rec: Record) -> None:
+        """Put one row in the catalogue and save it."""
+        with self._lock:
+            self.index()[wid] = rec
+            self._save_index()
+
+    def _forget(self, wid: str) -> None:
+        with self._lock:
+            self.index().pop(wid, None)
+            self._save_index()
 
     def _read_catalogue(self) -> dict[str, Record]:
         self.store.invalidate(INDEX)
@@ -584,6 +613,10 @@ class Library:
 
     def _save_index(self, *, replace: bool = False) -> None:
         """Write this process's changes onto the latest catalogue; `replace` writes ours whole."""
+        with self._lock:
+            self._save_locked(replace)
+
+    def _save_locked(self, replace: bool) -> None:
         mine = self.index()
         if replace:
             latest = dict(mine)
@@ -597,8 +630,10 @@ class Library:
         rows = sorted(latest.values(), key=lambda r: r["work"])
         body = "".join(_canon(r) + "\n" for r in rows)
         self.store.put(INDEX, body.encode(), "application/x-ndjson")
-        # Update in place: callers may hold the dict index() returned.
-        mine.clear()
+        # Update in place: callers may hold the dict index() returned. Never emptied on the way:
+        # another thread's lookup in that instant would take a held paper for one it must fetch.
+        for work in [w for w in mine if w not in latest]:
+            del mine[work]
         mine.update(latest)
         self._loaded = {w: _canon(r) for w, r in latest.items()}
 
@@ -606,9 +641,7 @@ class Library:
         if not value:
             return None
         v = str(value).lower()
-        return next(
-            (r for r in self.index().values() if str(r.get(field) or "").lower() == v), None
-        )
+        return next((r for r in self._rows() if str(r.get(field) or "").lower() == v), None)
 
     def _put_json(self, key: str, obj: Any, *, indent: int | None = None) -> bytes:
         body = json.dumps(obj, indent=indent).encode()
@@ -655,8 +688,7 @@ class Library:
             return None
         prov = json.loads(self.store.get(prov_key))
         rec = self._row(json.loads(self.store.get(f"{PREFIX}works/{wid}/work.json")), prov)
-        self.index()[wid] = rec
-        self._save_index()
+        self._record(wid, rec)
         return rec
 
     # -- fetch ---------------------------------------------------------------------------------
@@ -772,8 +804,7 @@ class Library:
             self.store.assert_private(base + _EXT[ft.fmt][0])
 
         rec = self._row(work, prov)
-        self.index()[wid] = rec
-        self._save_index()
+        self._record(wid, rec)
         return {
             **rec,
             "from": "retrieved" if ok else "not-obtainable",
@@ -1179,7 +1210,7 @@ class Library:
         """Term matching over held titles and authors, and optionally inside stored full text."""
         terms = [t.lower() for t in query.split() if t]
         out = []
-        for rec in self.index().values():
+        for rec in self._rows():
             hay = " ".join([rec.get("title") or "", " ".join(rec.get("authors") or [])]).lower()
             hit = all(t in hay for t in terms)
             where = "title/authors" if hit else None
@@ -1247,25 +1278,27 @@ class Library:
             self._point_doi(doi, wid)
         self.store.assert_private(base + "fulltext.pdf")
         rec = self._row(work, prov)
-        self.index()[wid] = rec
-        self._save_index()
+        self._record(wid, rec)
         return rec
 
     # -- maintenance ---------------------------------------------------------------------------
 
     def rebuild_index(self) -> int:
         """Rebuild the catalogue from the authoritative per-work provenance objects."""
-        self._index = {}
+        rebuilt: dict[str, Record] = {}
         for key in self.store.keys(f"{PREFIX}works/"):
             if key.endswith("/provenance.json"):
                 wid = key.split("/")[2]
                 prov = json.loads(self.store.get(key))
                 prov.setdefault("work", wid)
                 work = json.loads(self.store.get(f"{PREFIX}works/{wid}/work.json"))
-                self._index[wid] = self._row(work, prov)
-        # The rebuilt catalogue is authoritative: rows without provenance objects must go.
-        self._save_index(replace=True)
-        return len(self._index)
+                rebuilt[wid] = self._row(work, prov)
+        # The rebuilt catalogue is authoritative: rows without provenance objects must go. It
+        # replaces the old one in a single step, so no reader sees it half built.
+        with self._lock:
+            self._index = rebuilt
+            self._save_index(replace=True)
+        return len(rebuilt)
 
     def adopt_orphans(self) -> list[dict[str, Any]]:
         """Move works keyed by an arrival identifier (`pmcid-...`, `doi-...`) to their OpenAlex id.
@@ -1276,7 +1309,7 @@ class Library:
         is repointed, and the orphan's objects are deleted only after the copy is in place.
         """
         report: list[dict[str, Any]] = []
-        for key, _rec in sorted(self.index().items()):
+        for key in sorted(r["work"] for r in self._rows()):
             if key.startswith("W"):
                 continue
             prov = json.loads(self.store.get(f"{PREFIX}works/{key}/provenance.json"))
@@ -1317,24 +1350,23 @@ class Library:
                 self._put_json(new + "provenance.json", prov, indent=1)
                 for name in prov.get("sha256") or {}:
                     self.store.assert_private(new + name)
-                self.index()[wid] = self._row(work, prov)
+                self._record(wid, self._row(work, prov))
                 action = "moved"
             doi = _work_doi(work) or ids.get("doi")
             if doi:
                 self._point_doi(doi, wid)
             for k in self.store.keys(old):
                 self.store.delete(k)
-            self.index().pop(key, None)
-            self._save_index()
+            self._forget(key)
             report.append({"orphan": key, "action": action, "work": wid})
         return report
 
     def status(self) -> dict[str, Any]:
-        idx = self.index()
+        rows = self._rows()
         return {
-            "works": len(idx),
-            "with_full_text": sum(1 for r in idx.values() if r["full_text"]),
-            "not_obtainable": sum(1 for r in idx.values() if not r["full_text"]),
+            "works": len(rows),
+            "with_full_text": sum(1 for r in rows if r["full_text"]),
+            "not_obtainable": sum(1 for r in rows if not r["full_text"]),
             "store": type(self.store).__name__,
             "locate_providers": [p.name for p in self.providers],
             "openalex_key": bool(self.oa.api_key),

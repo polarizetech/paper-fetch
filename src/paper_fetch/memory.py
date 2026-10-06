@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import re
 import secrets
+import threading
 import time
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -106,6 +107,8 @@ class SearchMemory:
     def __init__(self, store: Store, vocabulary: Iterable[tuple[re.Pattern[str], str]] = ()):
         self.store = store
         self.vocabulary = list(vocabulary)
+        # record() is read, append, write: two threads of one server must not interleave it.
+        self._lock = threading.Lock()
 
     def entries(self) -> list[dict[str, Any]]:
         self.store.invalidate(MEMORY)
@@ -122,10 +125,11 @@ class SearchMemory:
             **entry,
             "hits": entry.get("hits", [])[:HITS_KEPT],
         }
-        rows = self.entries()
-        rows.append(row)
-        body = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
-        self.store.put(MEMORY, body.encode(), "application/x-ndjson")
+        with self._lock:
+            rows = self.entries()
+            rows.append(row)
+            body = "".join(json.dumps(r, sort_keys=True) + "\n" for r in rows)
+            self.store.put(MEMORY, body.encode(), "application/x-ndjson")
         return row
 
     def recall(
