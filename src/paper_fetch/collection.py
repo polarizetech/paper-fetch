@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -40,6 +41,8 @@ def _key(name: str) -> str:
 class Collections:
     def __init__(self, store: Store) -> None:
         self.store = store
+        # Each change is read, modify, write: two threads of one server must not interleave them.
+        self._lock = threading.RLock()
 
     def names(self) -> list[str]:
         return sorted(
@@ -69,34 +72,38 @@ class Collections:
         self, name: str, *, profile: str | None = None, description: str | None = None
     ) -> dict[str, Any]:
         """Create a collection, or update the profile / description of an existing one."""
-        c = self.get(name) or {
-            "name": name,
-            "profile": None,
-            "description": "",
-            "created": _now(),
-            "members": {},
-        }
-        if profile is not None:
-            c["profile"] = profile or None
-        if description is not None:
-            c["description"] = description
-        return self._put(c)
+        with self._lock:
+            c = self.get(name) or {
+                "name": name,
+                "profile": None,
+                "description": "",
+                "created": _now(),
+                "members": {},
+            }
+            if profile is not None:
+                c["profile"] = profile or None
+            if description is not None:
+                c["description"] = description
+            return self._put(c)
 
     def add(self, name: str, members: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """Add members (key -> {title, via, ...}); an existing member keeps when it was added."""
-        c = self.require(name)
-        for key, info in members.items():
-            old = c["members"].get(key)
-            c["members"][key] = {**info, "added": old["added"] if old else _now()}
-        return self._put(c)
+        with self._lock:
+            c = self.require(name)
+            for key, info in members.items():
+                old = c["members"].get(key)
+                c["members"][key] = {**info, "added": old["added"] if old else _now()}
+            return self._put(c)
 
     def remove(self, name: str, keys: list[str]) -> dict[str, Any]:
-        c = self.require(name)
-        missing = [k for k in keys if c["members"].pop(k, None) is None]
-        if missing:
-            raise ValueError(f"not in {name}: {', '.join(missing)}")
-        return self._put(c)
+        with self._lock:
+            c = self.require(name)
+            missing = [k for k in keys if c["members"].pop(k, None) is None]
+            if missing:
+                raise ValueError(f"not in {name}: {', '.join(missing)}")
+            return self._put(c)
 
     def delete(self, name: str) -> None:
-        self.require(name)
-        self.store.delete(_key(name))
+        with self._lock:
+            self.require(name)
+            self.store.delete(_key(name))

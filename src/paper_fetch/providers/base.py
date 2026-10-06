@@ -28,6 +28,7 @@ answers, and only the first is about the literature.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from typing import Any, ClassVar
@@ -102,17 +103,21 @@ class Provider:
         self.http = http
         self._last = 0.0
         self.calls = 0
+        # Requests are spaced per provider. Two threads working out their wait from the same
+        # `_last` would both go at once, which is how a 10-per-minute limit gets broken.
+        self._pace = threading.Lock()
 
     def available(self) -> tuple[bool, str]:
         missing = [k for k in self.needs if not os.environ.get(k)]
         return (False, f"needs {', '.join(missing)}") if missing else (True, "")
 
     def _get(self, url: str, headers: dict[str, str] | None = None) -> Response:
-        wait = self.min_interval_s - (time.monotonic() - self._last)
-        if wait > 0:
-            time.sleep(wait)
-        self._last = time.monotonic()
-        self.calls += 1
+        with self._pace:
+            wait = self.min_interval_s - (time.monotonic() - self._last)
+            if wait > 0:
+                time.sleep(wait)
+            self._last = time.monotonic()
+            self.calls += 1
         try:
             r = self.http.get(url, headers, timeout=self.timeout_s, retries=1)
         except ConnectionError as e:

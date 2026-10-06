@@ -342,6 +342,18 @@ had added. Two saves in the same instant can still race; the window is the time 
 and one write, and the authoritative per-work objects repair any row lost in it
 (`paper-fetch rebuild-index`).
 
+**Several threads share one Library.** The MCP library runs every tool call on a worker thread
+(`anyio.to_thread`), so one server's calls overlap. That was assumed away at first and failed in
+service: 13 `retrieve` calls died on the passage index's one SQLite connection ("bad parameter or
+other API misuse", once garbled text). Since 2026-10-06 each shared part has a lock, and none is
+held across a fetch or a search: the passage index's connection (embedding stays outside); the
+in-memory catalogue (readers walk a snapshot from `_rows()`, writers go through `_record` /
+`_forget`, and a save updates the dictionary in place without ever emptying it, so a lookup
+mid-save cannot take a held paper for one to fetch); the search memory's and a collection's
+read-modify-write; the lazily built parts; and each provider's request spacing, which two threads
+could otherwise both pass at once. `tests/test_threads.py` runs each from 16 threads and fails
+without its lock. The locks are per process: across processes the paragraph above still applies.
+
 ## Honest status
 
 - **Every provider has run live**, including the OpenAlex content route (with a key: a PDF
