@@ -27,11 +27,13 @@ approximate-nearest-neighbour index to tune, drift, or explain.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
 import re
 import sqlite3
+import threading
 import time
 import weakref
 from collections.abc import Callable, Iterable, Sequence
@@ -280,10 +282,27 @@ def _normalise(np: Any, vec: Sequence[float] | Any) -> Any:
     return arr / norm if norm else arr
 
 
+def _locked(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a PassageIndex method while holding the index's lock."""
+
+    @functools.wraps(method)
+    def held(self: PassageIndex, *args: Any, **kwargs: Any) -> Any:
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return held
+
+
 class PassageIndex:
     def __init__(self, path: Path, model: str = "", embed: Embedder | None = None):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path, self.model, self.embed = path, model, embed if model else None
+        # One connection, used from several threads: an MCP server runs every tool call on a
+        # worker thread, so two retrievals overlap. SQLite's connection object is not safe for
+        # that (observed: "bad parameter or other API misuse", and passage text read back as
+        # garbage), so every use of it holds this lock. Embedding, the slow part of indexing,
+        # happens outside it.
+        self._lock = threading.RLock()
         # Several processes (MCP servers, the CLI) may share the file; WAL lets readers run while
         # one writes, and writers wait for each other rather than failing.
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
@@ -308,6 +327,7 @@ class PassageIndex:
 
     # -- writing -------------------------------------------------------------------------------
 
+    @_locked
     def has(self, work: str, text_sha256: str | None = None) -> bool:
         """Whether the work is indexed by the current chunker (and, if given, from this text)."""
         row = self.db.execute(
@@ -333,13 +353,14 @@ class PassageIndex:
         if self.embed is not None and self._np is not None:
             # Passages this work already has, word for word, keep their vectors: re-chunking a
             # paper (a new chunker, an erratum appended) embeds only what is new.
-            known = dict(
-                self.db.execute(
-                    "select p.text, v.vec from passages p join vectors v on v.passage_id = p.id "
-                    "where p.work=?",
-                    (work,),
+            with self._lock:
+                known = dict(
+                    self.db.execute(
+                        "select p.text, v.vec from passages p join vectors v "
+                        "on v.passage_id = p.id where p.work=?",
+                        (work,),
+                    )
                 )
-            )
             vectors = [known.get(p[2]) for p in pieces]
             todo = [i for i, v in enumerate(vectors) if v is None]
             for at in range(0, len(todo), batch):
@@ -347,7 +368,7 @@ class PassageIndex:
                 vecs = self.embed([pieces[i][2] for i in group])
                 for i, v in zip(group, vecs, strict=True):
                     vectors[i] = _normalise(self._np, v).tobytes()
-        with self.db:
+        with self._lock, self.db:
             # Take the write lock before reading what to replace, so a concurrent writer cannot
             # commit this work between the check and the delete.
             self.db.execute("begin immediate")
@@ -389,9 +410,10 @@ class PassageIndex:
                 )
                 if vec is not None:
                     self.db.execute("insert into vectors values (?,?)", (cur.lastrowid, vec))
-        self._matrix = None
+            self._matrix = None
         return len(pieces)
 
+    @_locked
     def remove(self, work: str) -> None:
         with self.db:
             self._remove(work)
@@ -411,6 +433,7 @@ class PassageIndex:
 
     # -- reading -------------------------------------------------------------------------------
 
+    @_locked
     def paper(self, work: str) -> dict[str, Any] | None:
         cur = self.db.execute("select * from papers where work=?", (work,))
         row = cur.fetchone()
@@ -421,9 +444,11 @@ class PassageIndex:
         out["is_retracted"] = bool(out["is_retracted"])
         return out
 
+    @_locked
     def works(self) -> list[str]:
         return [r[0] for r in self.db.execute("select work from papers order by work")]
 
+    @_locked
     def passages(self, work: str, start_ord: int = 0, limit: int = 4) -> list[Passage]:
         """A paper's passages in order, from position `start_ord`."""
         rows = self.db.execute(
@@ -433,6 +458,7 @@ class PassageIndex:
         )
         return [Passage(*r) for r in rows]
 
+    @_locked
     def stats(self) -> dict[str, Any]:
         one = self.db.execute
         return {
@@ -471,6 +497,7 @@ class PassageIndex:
             return [None] * len(queries)
         return list(self.embed(queries))
 
+    @_locked
     def search(
         self,
         query: str,
