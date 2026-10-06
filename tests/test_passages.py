@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -408,3 +409,21 @@ def test_a_paper_reindexed_by_an_older_server_counts_as_stale_again(tmp_path: Pa
         idx.db.execute("update papers set indexed_at = '2020-01-01T00:00:00Z' where work = 'WA'")
     assert not idx.has("WA")
     assert idx.stats()["stale"] == 1
+
+
+def test_one_index_serves_many_threads_at_once(idx: PassageIndex) -> None:
+    """An MCP server runs each tool call on a worker thread, so retrievals overlap on the one
+    connection. (Found in service: "bad parameter or other API misuse", and garbled text.)"""
+    vec = embed(["sleep memory heart rate"])[0]
+
+    def work(i: int) -> int:
+        if i % 5 == 0:
+            idx.add(rec(f"W{900 + i}"), PAPER_B + f"\n\n{para(f'topic {i}')}")
+        found = idx.search("sleep memory heart rate", vec, limit=10)
+        assert all(p.text and p.text == p.text.encode().decode() for p in found)
+        assert idx.passages("WA", 0, 2)[0].id == "WA#p0"
+        assert idx.paper("WB") is not None
+        return len(found) + idx.stats()["papers"]
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        assert all(n > 0 for n in pool.map(work, range(200)))
