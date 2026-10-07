@@ -35,14 +35,46 @@ from typing import Any, ClassVar
 
 from ..http import HttpClient, Response
 
-__all__ = ["Hit", "Ids", "Location", "Provider", "ProviderUnavailable", "clean_doi"]
+__all__ = [
+    "PAUSE_OUTAGE_S",
+    "PAUSE_QUOTA_S",
+    "PAUSE_RATE_LIMIT_S",
+    "Hit",
+    "Ids",
+    "Location",
+    "Provider",
+    "ProviderBroken",
+    "ProviderUnavailable",
+    "clean_doi",
+]
 
 #: Identifiers keyed by scheme: doi, pmid, pmcid, openalex, arxiv, plus provider-specific ones.
 Ids = dict[str, Any]
 
 
+#: How long a provider is left alone after it fails, in seconds (`Library` keeps the clock).
+PAUSE_OUTAGE_S = 60.0  # unreachable, a 5xx, a refusal: ask again soon
+PAUSE_RATE_LIMIT_S = 300.0  # a 429: asking again at once is how a limit becomes a ban
+PAUSE_QUOTA_S = float("inf")  # a spent allowance: not again in this process
+
+
 class ProviderUnavailable(RuntimeError):
-    """The service refused or rate-limited us. Reported per provider, never swallowed."""
+    """An OUTSIDE problem: the service is down, refused us, rate-limited us or has no allowance
+    left. Reported per provider, never swallowed, and never a reason to stop: the other providers
+    have answered. `pause_s` says how long to leave the provider alone (None: `PAUSE_OUTAGE_S`).
+    """
+
+    def __init__(self, message: str, *, pause_s: float | None = None) -> None:
+        super().__init__(message)
+        self.pause_s = pause_s
+
+
+class ProviderBroken(RuntimeError):
+    """A DEFECT, here or in how we use the service: it rejected what we sent, or answered in a
+    shape this code does not read. Waiting will not fix it, so it is not `unavailable`: it is
+    reported as `error`, named in the search's `broken` list and logged with its traceback
+    (`problems.py`), so it gets fixed instead of being read as "nothing found".
+    """
 
 
 def clean_doi(doi: str | None) -> str | None:
@@ -127,8 +159,26 @@ class Provider:
             hint = (
                 f"; set {', '.join(self.recommends)} for higher limits" if self.recommends else ""
             )
-            raise ProviderUnavailable(f"{self.name} rate-limited us (HTTP 429){hint}")
+            raise ProviderUnavailable(
+                f"{self.name} rate-limited us (HTTP 429){hint}", pause_s=PAUSE_RATE_LIMIT_S
+            )
         return r
+
+    def _answered(self, r: Response) -> Response:
+        """The answer to a QUERY, or the reason there is none.
+
+        A query endpoint answers 200 with an empty list when nothing matches, so anything else is
+        a failure, and returning `[]` for it would report an outage or a defect as "no results".
+        A 5xx or a 403 is the service's side (`ProviderUnavailable`); a 401 or any other 4xx means
+        it rejected our key or our request (`ProviderBroken`). Not for lookups by identifier,
+        where a 404 is an honest "not known".
+        """
+        if r.status == 200:
+            return r
+        if r.status >= 500 or r.status == 403:
+            raise ProviderUnavailable(f"{self.name} answered HTTP {r.status}")
+        detail = r.body[:160].decode("utf-8", "replace").strip()
+        raise ProviderBroken(f"{self.name} rejected our request (HTTP {r.status}): {detail}")
 
     def search(self, query: str, *, oa_only: bool = True, limit: int = 10) -> list[Hit]:
         raise NotImplementedError(f"{self.name} does not search")

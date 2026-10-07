@@ -31,8 +31,8 @@ import urllib.parse
 from typing import Any
 
 from ..http import HttpClient
-from ..openalex import CONTENT, OpenAlex
-from .base import Hit, Ids, Location, Provider, clean_doi
+from ..openalex import CONTENT, OpenAlex, OpenAlexUnavailable
+from .base import Hit, Ids, Location, Provider, ProviderUnavailable, clean_doi
 
 __all__ = ["PMCS3", "Biorxiv", "Core", "EuropePMC", "OpenAlexProvider", "PubMed", "Unpaywall"]
 
@@ -57,9 +57,12 @@ class OpenAlexProvider(Provider):
         self.client = client or OpenAlex(http=http)
 
     def search(self, query: str, *, oa_only: bool = True, limit: int = 10) -> list[Hit]:
-        raw = self.client.search(
-            query, filters={"is_oa": "true"} if oa_only else None, per_page=limit
-        )
+        try:
+            raw = self.client.search(
+                query, filters={"is_oa": "true"} if oa_only else None, per_page=limit
+            )
+        except OpenAlexUnavailable as e:
+            raise ProviderUnavailable(str(e), pause_s=e.pause_s) from e
         out = []
         for w in raw.get("results", []):
             oa = w.get("open_access") or {}
@@ -135,8 +138,7 @@ class EuropePMC(Provider):
         r = self._get(
             f"{self.BASE}/search?format=json&resultType=core&pageSize={limit}&query={_Q(q)}"
         )
-        if r.status != 200:
-            return []
+        self._answered(r)
         return json.loads(r.body).get("resultList", {}).get("result", [])
 
     def _loc(self, x: dict[str, Any]) -> Location | None:
@@ -222,16 +224,14 @@ class PubMed(Provider):
             f"{self.BASE}/esearch.fcgi?db=pubmed&retmode=json&retmax={limit}"
             f"&term={_Q(term)}&{self._p()}"
         )
-        if r.status != 200:
-            return []
+        self._answered(r)
         pmids = json.loads(r.body).get("esearchresult", {}).get("idlist", [])
         if not pmids:
             return []
         r = self._get(
             f"{self.BASE}/esummary.fcgi?db=pubmed&retmode=json&id={','.join(pmids)}&{self._p()}"
         )
-        if r.status != 200:
-            return []
+        self._answered(r)
         res = json.loads(r.body).get("result", {})
         out = []
         for pmid in pmids:
@@ -330,8 +330,7 @@ class Core(Provider):
 
     def _results(self, q: str, limit: int) -> list[dict[str, Any]]:
         r = self._get(f"{self.BASE}?q={_Q(q)}&limit={limit}", self._headers())
-        if r.status != 200:
-            return []
+        self._answered(r)
         return json.loads(r.body).get("results", [])
 
     def _hit(self, x: dict[str, Any]) -> Hit:

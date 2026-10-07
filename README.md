@@ -71,19 +71,26 @@ $ paper-fetch retrieve "does sleep improve recall?" --collection sleep-review
 - **Validated, not assumed.** A candidate is refused if its md5 does not match the provider's
   published checksum, if it is an HTML page (a login screen served as "PDF"), if it is not the
   format claimed, or if the extracted text does not look like prose.
-- **Loud, per-provider failure.** A rate-limited or unreachable provider is reported by name as
-  `unavailable`; it is never silently folded into "no results".
+- **Loud, per-provider failure, of two kinds.** A provider that is down, rate-limited or out of
+  allowance is reported by name as `unavailable`, the other providers answer, and it is left alone
+  for a while (a minute after an outage, five after a 429, the rest of the process once an
+  allowance is spent) instead of being asked again by every search. A provider that fails because
+  of a **defect** (it rejected our request, or its answer changed shape) is reported as `error`,
+  named in the search's `broken` list and logged with its traceback (`paper-fetch problems`).
+  Neither is ever folded into "no results".
 - **Not Google Scholar.** It has no API and its terms forbid automated querying.
 
 ## Install
 
 Python 3.11+.
 
+paper-fetch is not on PyPI; install it from this repository, with the extras you need:
+
 ```bash
-pip install "paper-fetch[mcp]"          # CLI + MCP server
-pip install "paper-fetch[mcp,s3]"       # ... plus the S3-compatible store (boto3)
-pip install "paper-fetch[retrieval]"    # numpy, for embedding-based passage retrieval
-pip install "paper-fetch[rerank]"       # onnxruntime + tokenizers, for the cross-encoder
+pip install "paper-fetch[mcp] @ git+https://github.com/polarizetech/paper-fetch"     # CLI + MCP server
+pip install "paper-fetch[mcp,s3] @ git+https://github.com/polarizetech/paper-fetch"  # ... plus the S3-compatible store (boto3)
+# other extras: `retrieval` (numpy, for embedding-based passage retrieval),
+#               `rerank` (onnxruntime + tokenizers, for the cross-encoder)
 # or, from a checkout:
 uv sync && uv run paper-fetch --help
 ```
@@ -118,6 +125,7 @@ those files out of repositories (`chmod 600`).
 | `PAPER_FETCH_S3_ENDPOINT_URL`, `PAPER_FETCH_S3_REGION` | S3 store: endpoint for non-AWS services (DigitalOcean Spaces, MinIO, R2, ...) and region. |
 | `PAPER_FETCH_S3_ACCESS_KEY_ID`, `PAPER_FETCH_S3_SECRET_ACCESS_KEY` | S3 store credentials; if unset, boto3's usual credential chain applies. |
 | `PAPER_FETCH_PROFILE_DIR` | Your discipline profiles (`*.toml`). Default `~/.config/paper-fetch/profiles`. |
+| `PAPER_FETCH_PROBLEMS` | Where provider defects are logged, one JSON object per line. Default `provider-problems.jsonl` in the local store's directory. Never in the store. |
 | `PAPER_FETCH_INDEX` | The passage index file. Default `passages.sqlite` in the local store's directory. Derived: deleting it loses nothing. |
 | `PAPER_FETCH_EMBED_MODEL`, `PAPER_FETCH_EMBED_URL` | An embedding model (e.g. `bge-m3`) on an Ollama-compatible endpoint (default `http://127.0.0.1:11434`). Unset, retrieval is lexical (BM25). |
 | `PAPER_FETCH_RERANK_MODEL` | A cross-encoder on the Hugging Face hub in ONNX form, `repo::file`, e.g. `onnx-community/bge-reranker-v2-m3-ONNX::onnx/model_int8.onnx`. Unset, no reranking. |
@@ -199,6 +207,7 @@ paper-fetch verify <id>                # re-hash stored files against their reco
 paper-fetch add <file.pdf> <id> --rights "..."
 paper-fetch citations <id> [--references] [-n N] [--refresh]
 paper-fetch scite-login | scite-logout  # sign this machine in to scite, in the browser
+paper-fetch problems [-n N] [--trace]  # provider defects logged on this machine
 paper-fetch status | rebuild-index | adopt-orphans
 ```
 
@@ -265,7 +274,7 @@ Every tool returns one JSON object:
 
 | tool | arguments | `data` |
 |---|---|---|
-| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true`, `scite: bool = false` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}` |
+| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true`, `scite: bool = false` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}`, plus `"broken": [{"provider", "error", "log"}]` when a provider failed because of a defect |
 | `fetch` | `identifier: str`, `collection: str = ""` | a catalogue row (below) plus `"from"` |
 | `profiles` | `slug: str = ""` | `{"profiles": [{"slug", "label", "scope", "anchors", "providers", "origin"}]}`, or one profile's `{"scope", "search_guidance", "terms", "anchors", "measures", "sources", ...}` |
 | `recall` | `query: str = ""`, `profile: str = ""`, `collection: str = ""`, `identifier: str = ""`, `limit: int = 10` | `{"searches": [{"id", "at", "query", "variants", "profile", "collection", "n_hits", "score", "hits": [...]}]}` |

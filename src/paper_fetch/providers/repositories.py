@@ -69,8 +69,7 @@ class PLOS(Provider):
             f"{self.SEARCH}?q={q}&fl=id,title_display,publication_date,journal,author_display"
             f"&fq=doc_type:full&rows={min(limit, 100)}&wt=json"
         )
-        if r.status != 200:
-            return []
+        self._answered(r)
         out = []
         for d in json.loads(r.body).get("response", {}).get("docs", []):
             doi = clean_doi(d.get("id"))
@@ -123,8 +122,7 @@ class OSF(Provider):
 
     def _cards(self, params: str) -> list[dict[str, Any]]:
         r = self._get(f"{self.SHARE}?{params}", {"Accept": "application/vnd.api+json"})
-        if r.status != 200:
-            return []
+        self._answered(r)
         return [
             i["attributes"]["resourceMetadata"]
             for i in json.loads(r.body).get("included", [])
@@ -217,8 +215,7 @@ class HAL(Provider):
         r = self._get(
             f"{self.BASE}?q={_Q(q)}&fq=submitType_s:file&fl={self.FL}&rows={rows}&wt=json"
         )
-        if r.status != 200:
-            return []
+        self._answered(r)
         return json.loads(r.body).get("response", {}).get("docs", [])
 
     def _hit(self, d: dict[str, Any]) -> Hit:
@@ -272,8 +269,7 @@ class DOAJ(Provider):
 
     def search(self, query: str, *, oa_only: bool = True, limit: int = 10) -> list[Hit]:
         r = self._get(f"{self.BASE}{_Q(query, safe='')}?pageSize={min(limit, 100)}")
-        if r.status != 200:
-            return []
+        self._answered(r)
         out = []
         for x in json.loads(r.body).get("results", []):
             b = x.get("bibjson") or {}

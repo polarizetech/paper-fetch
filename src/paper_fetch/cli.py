@@ -18,6 +18,7 @@
     paper-fetch add <file.pdf> <id> --rights "..."       a copy you legitimately hold
     paper-fetch citations <id> [--references] [-n N]     who cites it (or what it cites)
     paper-fetch scite-login | scite-logout               sign this machine in to scite (browser)
+    paper-fetch problems [-n N] [--trace]                provider defects logged on this machine
     paper-fetch status | rebuild-index | adopt-orphans
 
 `python -m paper_fetch ...` is the same program.
@@ -31,7 +32,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from . import scite_auth
+from . import problems, scite_auth
 from .citations import CitationsUnavailable
 from .config import load_env
 from .library import Library, NotFound
@@ -122,6 +123,9 @@ def build_parser() -> argparse.ArgumentParser:
         "scite-login", help="sign in to scite in the browser (enables the scite provider)"
     )
     sub.add_parser("scite-logout", help="forget this machine's scite sign-in")
+    p = sub.add_parser("problems", help="provider defects logged on this machine")
+    p.add_argument("-n", type=int, default=10)
+    p.add_argument("--trace", action="store_true", help="print each traceback")
     sub.add_parser("status")
     sub.add_parser("rebuild-index")
     sub.add_parser("adopt-orphans")
@@ -172,6 +176,13 @@ def _search(lib: Library, a: argparse.Namespace) -> None:
         else:
             extra = st.get("why")
         print(f"  {name:16s} {st['status']:12s} {extra}")
+    for b in res.get("broken", []):
+        print(
+            f"! BROKEN: {b['provider']} failed because of a defect, not an outage: {b['error']}\n"
+            f"  Its results are missing from this search. Logged with a traceback in {b['log']}"
+            " (`paper-fetch problems`).",
+            file=sys.stderr,
+        )
     print(f"\n{len(res['hits'])} distinct papers")
     for h in res["hits"]:
         ident = h["ids"].get("doi") or h["ids"].get("pmcid") or h["ids"].get("arxiv") or ""
@@ -341,6 +352,13 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         print(f"signed in to scite; sign-in stored at {path} (0600)")
     elif a.cmd == "scite-logout":
         print("scite sign-in removed" if scite_auth.logout() else "no scite sign-in on file")
+    elif a.cmd == "problems":
+        rows = problems.recent(a.n)
+        print(f"{len(rows)} shown, from {problems.log_path()}")
+        for r in rows:
+            print(f"  {r['at']}  {r['provider']:12s} {r['operation']:7s} {r['error']}")
+            if a.trace:
+                print("    " + r["traceback"].rstrip().replace("\n", "\n    "))
     elif a.cmd == "status":
         print(json.dumps(lib.status(), indent=1))
     elif a.cmd == "rebuild-index":

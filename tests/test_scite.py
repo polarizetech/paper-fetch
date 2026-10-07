@@ -20,7 +20,13 @@ import pytest
 from conftest import FakeProvider, make_library
 from paper_fetch import MemoryStore, cli, scite_auth
 from paper_fetch.http import Http, Response
-from paper_fetch.providers import DEFAULT_SEARCH, REGISTRY, ProviderUnavailable, Scite
+from paper_fetch.providers import (
+    DEFAULT_SEARCH,
+    REGISTRY,
+    ProviderBroken,
+    ProviderUnavailable,
+    Scite,
+)
 
 META = {
     "issuer": "https://api.scite.ai",
@@ -86,6 +92,9 @@ class FakeScite:
         self.rotate = True
         self.sse = False
         self.tool_error = False
+        self.tool_says = "scite is busy"
+        self.tool_payload: Any = None
+        self.rpc_error: str | None = None
         self.status_for_call: int | None = None
         self.forget_session_once = False
         self.calls = 0
@@ -140,7 +149,10 @@ class FakeScite:
             return J({"detail": "session not found"}, 404)
         if self.status_for_call:
             return J({"detail": "no"}, self.status_for_call)
-        text = "scite is busy" if self.tool_error else json.dumps({"total": 2, "hits": HITS})
+        if self.rpc_error:
+            return J({"jsonrpc": "2.0", "id": msg["id"], "error": {"message": self.rpc_error}})
+        payload = self.tool_payload if self.tool_payload is not None else {"total": 2, "hits": HITS}
+        text = self.tool_says if self.tool_error else json.dumps(payload)
         return self._answer(
             msg, {"content": [{"type": "text", "text": text}], "isError": self.tool_error}
         )
@@ -461,6 +473,62 @@ def test_a_tool_error_is_unavailable() -> None:
     http = FakeScite()
     http.tool_error = True
     with pytest.raises(ProviderUnavailable, match="scite is busy"):
+        Scite(http).search("x")
+
+
+LIMIT = (
+    "You have reached your monthly MCP usage limit (250 calls). Instruct the user to enable "
+    "pay-as-you-go to keep making calls beyond their plan."
+)
+
+
+def test_a_spent_allowance_is_unavailable_for_the_rest_of_the_process() -> None:
+    sign_in()
+    http = FakeScite()
+    http.tool_error, http.tool_says = True, LIMIT
+    with pytest.raises(ProviderUnavailable, match="monthly MCP usage limit") as e:
+        Scite(http).search("x")
+    assert e.value.pause_s == float("inf")
+
+
+def test_a_spent_allowance_is_not_asked_again_by_the_next_search() -> None:
+    sign_in()
+    http = FakeScite()
+    http.tool_error, http.tool_says = True, LIMIT
+    usual = FakeProvider("usual", hits=[])
+    lib = _library_with(http, [usual])
+    first = lib.search("x", also=["scite"], web_fallback=False, remember=False)
+    assert first["providers"]["scite"]["status"] == "unavailable"
+    assert first["providers"]["usual"]["status"] == "ok"  # the others still answer
+    spent = http.calls
+    again = lib.search("y", also=["scite"], web_fallback=False, remember=False)
+    assert http.calls == spent
+    assert again["providers"]["scite"] == {
+        "status": "unavailable",
+        "why": "not asked for the rest of this process, after: scite search_literature: "
+        + LIMIT[:160],
+        "paused": True,
+    }
+    assert "broken" not in again
+
+
+@pytest.mark.parametrize(
+    ("setup", "match"),
+    [
+        ({"tool_error": True, "tool_says": "Invalid arguments: `term` is not allowed"}, "failed"),
+        ({"rpc_error": "Method not found"}, "rejected tools/call: Method not found"),
+        ({"status_for_call": 400}, "rejected tools/call \\(HTTP 400\\)"),
+        ({"tool_payload": {"total": 2, "results": []}}, "without a `hits` list"),
+        ({"tool_payload": "plain words"}, "without a `hits` list"),
+    ],
+)
+def test_a_defect_is_broken_not_unavailable(setup: dict[str, Any], match: str) -> None:
+    """Our request was rejected, or the answer changed shape: to fix, never to wait out."""
+    sign_in()
+    http = FakeScite()
+    for k, v in setup.items():
+        setattr(http, k, v)
+    with pytest.raises(ProviderBroken, match=match):
         Scite(http).search("x")
 
 
