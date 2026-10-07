@@ -130,9 +130,13 @@ def search(  # noqa: PLR0917 -- MCP clients pass every argument by name
     profile: str = "",
     collection: str = "",
     expand: bool = True,
+    scite: bool = False,
 ) -> dict[str, Any]:
     """Search all configured literature providers and mark papers already held.
 
+    scite: also ask scite, which is left out by default because the subscription allows 250
+      calls a month. Set it when citation tallies or retraction notices matter, or when the
+      other providers found too little; a hit scite found carries `scite`.
     profile: a discipline (see `profiles`): a query using a synonym is also run with the field's
       indexed term, and hits naming the field's anchors rank first. A collection's own profile
       applies when none is given.
@@ -147,6 +151,7 @@ def search(  # noqa: PLR0917 -- MCP clients pass every argument by name
             profile=profile or None,
             collection=collection or None,
             expand=expand,
+            also=["scite"] if scite else None,
         )
     )
 

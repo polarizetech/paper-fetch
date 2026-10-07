@@ -89,9 +89,9 @@ DEFAULT_SEARCH = (
     "hal",
     "doaj",
     "core",
-    "scite",
 )
-# `scite` is skipped until someone signs in (`paper-fetch scite-login`).
+# `scite` is not in the default set: its subscription meters calls (250 a month), so a search asks
+# it only when told to (`search(also=["scite"])`, `--scite`, or by naming it in the set).
 # `web` is not in the default set: it runs as a FALLBACK (Library.search) when the set above finds
 # no open-access hit, or when named explicitly. PAPER_FETCH_WEB_FALLBACK=0 turns the fallback off.
 FALLBACK_SEARCH = "web"

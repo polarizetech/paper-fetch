@@ -98,6 +98,7 @@ class Provider:
     timeout_s: float = 20.0  # one slow provider must not stall a federated search
     terms: str = ""  # one line: what the service allows and what it costs
     cacheable: bool = True  # False where the service's terms on storing results are unchecked
+    metered: bool = False  # True where calls are rationed: asked the query as written, once
 
     def __init__(self, http: HttpClient) -> None:
         self.http = http

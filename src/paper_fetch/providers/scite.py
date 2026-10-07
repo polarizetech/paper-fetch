@@ -20,6 +20,14 @@ initialises a session over streamable HTTP and calls one tool, `search_literatur
 - **Not cached** (`cacheable = False`): scite's terms on storing its results in a shared store
   have not been checked.
 
+## Metered, so opt-in
+
+The subscription allows **250 MCP calls a month** (measured 2026-10-06: a day in the default
+search set, behind a gateway and several sessions, spent it). So `scite` is not in the default
+search set and `metered` is True: a search asks it only when told to (`also=["scite"]`, `--scite`,
+or by naming it), and then once, with the query as written, never with a profile's variants. Past
+the limit the tool answers with an error, reported `unavailable`.
+
 ## Failure
 
 Not signed in is `skipped` (`available()` is False, no network). A refused or expired sign-in, a
@@ -30,6 +38,7 @@ refresh and one retry; a 404 on a session gets one new session.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from typing import Any
 
@@ -79,12 +88,13 @@ class Scite(Provider):
     name, label = "scite", "scite (Smart Citations search, via its MCP server)"
     can_search, can_locate = True, False
     cacheable = False
+    metered = True
     min_interval_s = 1.5
     timeout_s = 45.0
     terms = (
-        "Subscription. Sign in once with `paper-fetch scite-login` (OAuth, no API key). Search "
-        "only: hits carry scite's open-access flag and citation tallies; copies come through the "
-        "other providers. Not cached."
+        "Subscription, 250 MCP calls a month; opt-in per search. Sign in once with `paper-fetch "
+        "scite-login` (OAuth, no API key). Search only: hits carry scite's open-access flag and "
+        "citation tallies; copies come through the other providers. Not cached."
     )
     MCP = "https://api.scite.ai/mcp"
     MAX = 50  # hits carry citation lists; scite asks clients to keep `limit` small
@@ -94,6 +104,7 @@ class Scite(Provider):
         self._session: str | None = None
         self._protocol: str | None = None
         self._next_id = 0
+        self._mcp = threading.RLock()  # one session, used by one thread at a time
 
     def available(self) -> tuple[bool, str]:
         if scite_auth.signed_in():
@@ -179,9 +190,10 @@ class Scite(Provider):
         self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def _call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        if self._protocol is None:
-            self._open()
-        res = self._request("tools/call", {"name": tool, "arguments": arguments})
+        with self._mcp:
+            if self._protocol is None:
+                self._open()
+            res = self._request("tools/call", {"name": tool, "arguments": arguments})
         text = next(
             (c.get("text") for c in res.get("content") or [] if c.get("type") == "text"), None
         )

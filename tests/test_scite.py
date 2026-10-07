@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from conftest import make_library
+from conftest import FakeProvider, make_library
 from paper_fetch import MemoryStore, cli, scite_auth
 from paper_fetch.http import Http, Response
 from paper_fetch.providers import DEFAULT_SEARCH, REGISTRY, ProviderUnavailable, Scite
@@ -180,10 +180,85 @@ def stored() -> dict[str, Any]:
 # -- registration -------------------------------------------------------------------------------
 
 
-def test_scite_is_a_search_only_provider_in_the_default_set() -> None:
+def test_scite_is_a_search_only_provider_left_out_of_the_default_set() -> None:
+    """Its subscription rations calls, so a search asks it only when told to."""
     assert REGISTRY["scite"] is Scite
-    assert "scite" in DEFAULT_SEARCH
-    assert (Scite.can_search, Scite.can_locate, Scite.cacheable) == (True, False, False)
+    assert "scite" not in DEFAULT_SEARCH
+    assert (Scite.can_search, Scite.can_locate, Scite.cacheable, Scite.metered) == (
+        True,
+        False,
+        False,
+        True,
+    )
+
+
+def _library_with(http: FakeScite, usual: list[Any]) -> Any:
+    lib, _ = make_library()
+    lib.search_providers = usual
+    lib._opted_in["scite"] = Scite(http)
+    return lib
+
+
+def test_a_search_asks_scite_only_when_told_to() -> None:
+    sign_in()
+    http = FakeScite()
+    usual = FakeProvider("usual", hits=[])
+    lib = _library_with(http, [usual])
+    plain = lib.search("x", oa_only=False, web_fallback=False, remember=False)
+    assert "scite" not in plain["providers"]
+    assert http.calls == 0
+    asked = lib.search("x", oa_only=False, also=["scite"], web_fallback=False, remember=False)
+    assert asked["providers"]["scite"]["status"] == "ok"
+    assert set(asked["providers"]) >= {"usual", "scite"}
+
+
+def test_also_does_not_ask_a_provider_twice_and_reuses_its_session() -> None:
+    sign_in()
+    http = FakeScite()
+    lib = _library_with(http, [])
+    for _ in range(2):
+        lib.search("x", oa_only=False, also=["scite", "scite"], web_fallback=False, remember=False)
+    methods = [m["method"] for m in http.rpc]
+    assert (methods.count("initialize"), methods.count("tools/call")) == (1, 2)
+    named = lib.search(
+        "x", providers=["scite"], also=["scite"], oa_only=False, web_fallback=False, remember=False
+    )
+    assert list(named["providers"]) == ["scite", "web"]
+
+
+def test_also_builds_the_provider_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    lib, _ = make_library()
+    first = lib._opt_in("scite")
+    assert isinstance(first, Scite)
+    assert lib._opt_in("scite") is first
+    with pytest.raises(ValueError, match="unknown provider"):
+        lib.search("x", also=["nope"], web_fallback=False, remember=False)
+
+
+def test_a_rationed_provider_is_asked_once_not_once_per_variant() -> None:
+    sign_in()
+    http = FakeScite()
+    usual = FakeProvider("usual", hits=[])
+    asked: list[str] = []
+    real = usual.search
+
+    def spy(query: str, **k: Any) -> Any:
+        asked.append(query)
+        return real(query, **k)
+
+    usual.search = spy  # type: ignore[method-assign]
+    lib = _library_with(http, [usual])
+    slug = next(iter(lib.profiles()))
+    prof = lib.profile(slug)
+    term, synonym = next((a.label, a.synonyms[0]) for a in prof.anchors if a.synonyms)
+    query = f"{synonym} in children"
+    assert len(prof.expand(query)) > 1, (term, synonym)
+    lib.search(
+        query, profile=slug, also=["scite"], oa_only=False, web_fallback=False, remember=False
+    )
+    assert len(asked) > 1  # the usual provider ran every variant
+    calls = [m["params"]["arguments"]["term"] for m in http.rpc if m["method"] == "tools/call"]
+    assert calls == [query]
 
 
 def test_not_signed_in_is_skipped_without_touching_the_network() -> None:
@@ -527,6 +602,27 @@ def test_cli_lists_scite_and_can_sign_out(capsys: pytest.CaptureFixture[str]) ->
     sign_in()
     assert cli.main(["scite-logout"], library=lib) == 0
     assert "scite sign-in removed" in capsys.readouterr().out
+
+
+def test_cli_scite_flag_and_mcp_parameter_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    from paper_fetch import mcp_server  # noqa: PLC0415
+
+    lib, _ = make_library()
+    seen: list[Any] = []
+
+    real = lib.search
+
+    def fake_search(query: str, **k: Any) -> dict[str, Any]:
+        seen.append(k.pop("also", None))
+        return real(query, **k, web_fallback=False, remember=False)
+
+    monkeypatch.setattr(lib, "search", fake_search)
+    monkeypatch.setattr(mcp_server, "_lib", lambda: lib)
+    cli.main(["search", "x"], library=lib)
+    cli.main(["search", "x", "--scite"], library=lib)
+    assert mcp_server.search("x")["ok"]
+    assert mcp_server.search("x", scite=True)["ok"]
+    assert seen == [None, ["scite"], None, ["scite"]]
 
 
 def test_cli_login_uses_the_library_http(
