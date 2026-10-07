@@ -114,7 +114,7 @@ those files out of repositories (`chmod 600`).
 | `OPENCITATIONS_ACCESS_TOKEN` | Optional; OpenCitations asks applications to send one. |
 | `NCBI_API_KEY` | Optional; raises PubMed from 3 to 10 requests/s. |
 | `CORE_API_KEY` | Optional; raises CORE's limits. |
-| `SEARXNG_URL` | Optional. A SearXNG instance with JSON output enabled, used as a last-resort *search* fallback (never a download source). |
+| `SEARXNG_URL` | Optional. A SearXNG instance with JSON output enabled, used as a last-resort *search* fallback (never a download source). Without it, a search that finds no open copy asks its caller to search the web instead (`ask_the_web`, then `leads`). |
 | `PAPER_FETCH_PROVIDERS` | Comma-separated locate order (default below). |
 | `PAPER_FETCH_SEARCH_PROVIDERS` | Comma-separated federated-search set (default below). |
 | `PAPER_FETCH_WEB_FALLBACK` | `0` disables the web fallback. |
@@ -207,6 +207,7 @@ paper-fetch verify <id>                # re-hash stored files against their reco
 paper-fetch add <file.pdf> <id> --rights "..."
 paper-fetch citations <id> [--references] [-n N] [--refresh]
 paper-fetch scite-login | scite-logout  # sign this machine in to scite, in the browser
+paper-fetch leads <url> [...]          # identifiers in URLs you found on the web (no network)
 paper-fetch problems [-n N] [--trace]  # provider defects logged on this machine
 paper-fetch status | rebuild-index | adopt-orphans
 ```
@@ -274,7 +275,8 @@ Every tool returns one JSON object:
 
 | tool | arguments | `data` |
 |---|---|---|
-| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true`, `scite: bool = false` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}`, plus `"broken": [{"provider", "error", "log"}]` when a provider failed because of a defect |
+| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true`, `scite: bool = false` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}`, plus `"broken": [{"provider", "error", "log"}]` when a provider failed because of a defect, and `"ask_the_web": {"why", "query", "web_search_here", "how"}` when no open copy was found and the library could not search the web itself |
+| `leads` | `found: list[str]` (URLs or text from your own web search) | `{"leads": [{"from", "ids", "key", "fetch", "verified": false, "in_library", "full_text_in_library", "work"}], "no_identifier": [...]}`. No network. |
 | `fetch` | `identifier: str`, `collection: str = ""` | a catalogue row (below) plus `"from"` |
 | `profiles` | `slug: str = ""` | `{"profiles": [{"slug", "label", "scope", "anchors", "providers", "origin"}]}`, or one profile's `{"scope", "search_guidance", "terms", "anchors", "measures", "sources", ...}` |
 | `recall` | `query: str = ""`, `profile: str = ""`, `collection: str = ""`, `identifier: str = ""`, `limit: int = 10` | `{"searches": [{"id", "at", "query", "variants", "profile", "collection", "n_hits", "score", "hits": [...]}]}` |

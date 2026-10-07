@@ -66,6 +66,7 @@ from .providers import (
     ProviderUnavailable,
     build,
 )
+from .providers.web import parse_ids
 from .rerank import Reranker, reranker_from_env
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
@@ -1070,6 +1071,22 @@ class Library:
         }
         if variant_reports:
             out["variant_providers"] = variant_reports
+        web = report.get(FALLBACK_SEARCH, {})
+        if "why_ran" in web and web["status"] != "ok":
+            # The web fallback was wanted and this library could not run it (no SearXNG, or it
+            # failed). A caller that can search the web is asked to, and to bring back what it
+            # finds: see `leads`.
+            out["ask_the_web"] = {
+                "why": web["why_ran"],
+                "query": query,
+                "web_search_here": f"{web['status']}: {web.get('why', '')}".rstrip(": "),
+                "how": (
+                    "Search the web yourself for this query (publisher pages, repositories, "
+                    "preprint servers, author pages). Pass the URLs you find to `leads`, then "
+                    "`fetch` the identifiers it returns. Nothing is downloaded from a web page: "
+                    "an identifier goes through the open-access providers, which decide openness."
+                ),
+            }
         broken = {
             name: r["why"]
             for rep in (report, *variant_reports.values())
@@ -1217,6 +1234,50 @@ class Library:
                 m["scite"] = {kk: h.extra[kk] for kk in keep if h.extra.get(kk)}
             m["title"] = m["title"] or h.title
             m["year"] = m["year"] or h.year
+
+    # -- leads a caller found on the web --------------------------------------------------------
+
+    def leads(self, found: Sequence[str]) -> dict[str, Any]:
+        """Paper identifiers in URLs (or text) a caller found on the web, marked with what is held.
+
+        The other half of `ask_the_web`: this library runs no web search of its own unless a
+        SearXNG instance is configured, and a caller that is a model usually can. Each item is
+        read for a DOI, PMID, PMCID or arXiv id exactly as a `web` provider hit is
+        (`providers.web.parse_ids`): **parsed, not resolved, and never trusted as open**. Nothing
+        is fetched here. `fetch` the `fetch` value of a lead: OpenAlex resolves it and the
+        open-access providers decide whether a copy may be kept. No network.
+        """
+        out: list[dict[str, Any]] = []
+        nothing: list[str] = []
+        seen: set[str] = set()
+        for item in found:
+            ids = {k: v for k, v in parse_ids(item, item).items() if v}
+            key = _dedupe_key(ids)
+            if key is None:
+                nothing.append(item[:300])
+                continue
+            if key in seen:
+                continue
+            seen.add(key)
+            row = self._held_by_key(key)
+            ident = (
+                ids.get("doi")
+                or ids.get("pmcid")
+                or (f"pmid:{ids['pmid']}" if ids.get("pmid") else f"arxiv:{ids['arxiv']}")
+            )
+            out.append(
+                {
+                    "from": item[:300],
+                    "ids": ids,
+                    "key": key,
+                    "fetch": ident,
+                    "verified": False,
+                    "in_library": bool(row),
+                    "full_text_in_library": bool(row and row["full_text"]),
+                    "work": row["work"] if row else None,
+                }
+            )
+        return {"leads": out, "no_identifier": nothing}
 
     # -- the citation graph (OpenCitations) -----------------------------------------------------
 

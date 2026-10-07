@@ -96,9 +96,11 @@ mcp = _Server(
         "exact offsets, for quoting. Open access is a right to read, not to republish. In a "
         "`search`, a provider that is `unavailable` has an outside problem (down, rate-limited, "
         "allowance spent): the other providers have answered, so carry on with their hits and "
-        "do not retry it. A result with `broken` is different: that provider failed because of "
-        "a defect, its hits are missing, and it will keep failing until fixed. Tell the user, "
-        "quoting the `broken` entry."
+        "do not retry it. A result with `ask_the_web` means no open copy was found and this "
+        "library has no web search of its own: search the web yourself for the query, pass the "
+        "URLs you find to `leads`, and `fetch` the identifiers it returns. A result with "
+        "`broken` is different: that provider failed because of a defect, its hits are missing, "
+        "and it will keep failing until fixed. Tell the user, quoting the `broken` entry."
     ),
 )
 
@@ -159,6 +161,18 @@ def search(  # noqa: PLR0917 -- MCP clients pass every argument by name
             also=["scite"] if scite else None,
         )
     )
+
+
+@mcp.tool()
+def leads(found: list[str]) -> dict[str, Any]:
+    """Read paper identifiers out of URLs (or text) you found by searching the web yourself.
+
+    Use it when a `search` result carries `ask_the_web`: the providers found no open copy and
+    this library has no web search of its own. Search the web, pass every result URL here, and
+    `fetch` the `fetch` value of each lead that is not already held. Identifiers are parsed, not
+    verified, and nothing is downloaded from a web page: `fetch` decides whether an open copy
+    exists. No network."""
+    return _run(lambda: _lib().leads(found))
 
 
 @mcp.tool()
