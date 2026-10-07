@@ -150,6 +150,7 @@ class Library:
             list(providers) if providers is not None else build(self.http, openalex_client=oa)
         )
         self._search_providers = list(search_providers) if search_providers is not None else None
+        self._opted_in: dict[str, Provider] = {}
         self.retry_after_days = retry_after_days
         self.search_ttl_days = search_ttl_days
         # One Library serves every tool call of an MCP server, each on its own worker thread.
@@ -181,6 +182,16 @@ class Library:
     @search_providers.setter
     def search_providers(self, value: Sequence[Provider]) -> None:
         self._search_providers = list(value)
+
+    def _opt_in(self, name: str) -> Provider:
+        """A provider asked for by name on top of the usual set, built once and kept (a scite
+        session is reused rather than opened per search)."""
+        with self._lock:
+            if name not in self._opted_in:
+                self._opted_in[name] = build(
+                    self.http, openalex_client=self.oa, names=[name], purpose="search"
+                )[0]
+            return self._opted_in[name]
 
     # -- profiles and memory --------------------------------------------------------------------
 
@@ -910,6 +921,7 @@ class Library:
         query: str,
         *,
         providers: Sequence[str] | None = None,
+        also: Sequence[str] | None = None,
         oa_only: bool = True,
         limit: int = 10,
         refresh: bool = False,
@@ -935,6 +947,10 @@ class Library:
         whether an earlier search already found it (`seen_before`: within the collection, if
         one is given) and whether the collection lists it (`in_collection`).
 
+        **Opt-in providers.** `also` names providers to ask on top of the usual set, for the
+        ones left out of it because their calls are rationed (`scite`: 250 a month). A rationed
+        provider is asked the query as written, once: never a profile's variants.
+
         **Web fallback.** When the providers above return no open-access hit, the `web` provider
         (SearXNG, opt-in) is asked too, and its report says why it ran. It is skipped, and
         reported `not-needed`, when an open hit already exists. Naming `web` in `providers` runs
@@ -952,6 +968,9 @@ class Library:
             if providers is not None
             else self.search_providers
         )
+        if also:
+            have = {p.name for p in provs}
+            provs = [*provs, *(self._opt_in(n) for n in dict.fromkeys(also) if n not in have)]
         queries = prof.expand(query) if prof and expand else [query]
         report: dict[str, dict[str, Any]] = {}
         variant_reports: dict[str, dict[str, dict[str, Any]]] = {}
@@ -959,6 +978,8 @@ class Library:
         for q in queries:
             rep = report if q == query else variant_reports.setdefault(q, {})
             for p in provs:
+                if p.metered and q != query:
+                    continue  # rationed calls: the query as written, once
                 self._ask(p, q, oa_only=oa_only, limit=limit, refresh=refresh, into=(rep, merged))
 
         if web_fallback is None:

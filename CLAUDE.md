@@ -1,7 +1,7 @@
 # CLAUDE.md — paper-fetch
 
-**One private, deduplicated library of open-access full texts, found through THIRTEEN swappable
-providers plus a web-search fallback, stored in a local directory or any S3-compatible bucket, and
+**One private, deduplicated library of open-access full texts, found through TWELVE swappable
+providers, plus scite on request and a web-search fallback, stored in a local directory or any S3-compatible bucket, and
 checked before anything is downloaded.** A paper retrieved once is never retrieved again, by any
 project, on any machine that shares the store.
 
@@ -82,7 +82,7 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
 ## ⭐ Over MCP
 
 `paper-fetch-mcp` (`src/paper_fetch/mcp_server.py`, the official `mcp` SDK: `FastMCP` on 1.x,
-`MCPServer` on 2.x; needs the `mcp` extra). Tools: `search` (with `profile`, `collection`),
+`MCPServer` on 2.x; needs the `mcp` extra). Tools: `search` (with `profile`, `collection`, `scite`),
 `fetch` (with `collection`), `library`, `text` (paged, 100,000 characters by default, clamped to
 1,000..100,000), `provenance`, `citations`, `providers`, `status`, `profiles`, `recall`,
 `collections`, `collection`, `create_collection`, `collect`, `uncollect`, `retrieve`, `passages`,
@@ -119,7 +119,7 @@ providers interchangeable. Choose them by name, no code change:
 
 ```bash
 PAPER_FETCH_PROVIDERS=pmc-s3,europepmc,plos,openalex,biorxiv,openaire,hal,osf,core,unpaywall   # locate order
-PAPER_FETCH_SEARCH_PROVIDERS=openalex,europepmc,pubmed,openaire,plos,osf,hal,doaj,core,scite    # search set
+PAPER_FETCH_SEARCH_PROVIDERS=openalex,europepmc,pubmed,openaire,plos,osf,hal,doaj,core          # search set
 ```
 
 Those are the defaults. An **unknown name raises** with the known list — a typo that silently
@@ -137,7 +137,7 @@ provider named in the search set (or the reverse) also raises.
 | `osf` | ✓ via SHARE (PsyArXiv and other OSF servers) | `osf.io/<id>/download` when the preprint is CC-licensed | — | SHARE's `identifier` filter returned 0 for a DOI it holds, `sameAs` finds it; OSF's own v2 API 502s, so it is not used |
 | `hal` | ✓ file records only | `fileMain_s` when `openAccess_bool` | — | licence is often HAL's deposit authorisation, which permits reading, not reuse |
 | `doaj` | ✓ search only | — (links are landing pages) | — | finds papers other indexes miss; copies then come through other providers |
-| `scite` | ✓ search only, via its MCP server | — never a copy source | a sign-in (`paper-fetch scite-login`), no key | 210M+ papers searched through citing sentences; hits carry tallies and editorial notices; skipped until signed in; not cached |
+| `scite` | **opt-in** (`also=["scite"]`, `--scite`, MCP `scite: true`), via its MCP server | — never a copy source | a sign-in (`paper-fetch scite-login`), no key | **250 calls a month**; 210M+ papers searched through citing sentences; hits carry tallies and editorial notices; not cached |
 | `core` | ✓ | repository PDF | optional `CORE_API_KEY` | 17.5 M records; 10 req/window; **no licence field** |
 | `biorxiv` | — (API has no keyword search: 404) | JATS + licence by DOI | — | |
 | `unpaywall` | — | best OA PDF | `PAPER_FETCH_EMAIL` | sometimes knows no open copy that OpenAIRE finds in a repository |
@@ -222,8 +222,16 @@ and the scopes `mcp offline_access`. So the provider is a small MCP client, writ
   citation list) and drops what scite marks closed, because the tool has no open-access filter.
 - **Not cached** (`cacheable = False`): scite's terms on storing results in a shared store are
   unchecked. The search memory still records which DOIs a search returned, as for any provider.
-- **In the default search set, skipped until signed in** (`available()` reads only the file). An
-  expired sign-in, a 429 or a tool error is `unavailable` and says what to do.
+- **Opt-in, because it is rationed: 250 MCP calls a month** on the subscription. It was in the
+  default search set for one day (2026-10-05): a gateway and a dozen sessions searching, each
+  profile search asking up to three variants, spent the month's allowance, after which the tool
+  answers "You have reached your monthly MCP usage limit" and scite's own connector may be out
+  too. So `scite` is not in `DEFAULT_SEARCH` and `Provider.metered` is True for it: a search asks
+  it only through `also=["scite"]` (`--scite`; MCP `search(scite=true)`) or when it is named in
+  the set, and then **once, with the query as written**, never a profile's variants. The opted-in
+  instance is built once per `Library`, so its session is reused, and one thread uses it at a time.
+- Not signed in is `skipped` (`available()` reads only the file). An expired sign-in, a 429, the
+  monthly limit or a tool error is `unavailable` and says what to do.
 - A merged hit carries `scite` (tally, `oa_status`, `editorial_notices`) when scite found it.
 
 ## ⭐ The citation graph — OpenCitations

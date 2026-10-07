@@ -139,13 +139,13 @@ those files out of repositories (`chmod 600`).
 | `unpaywall` | | yes | Needs `PAPER_FETCH_EMAIL`. |
 | `pubmed` | yes | | Finds papers and PMCIDs; PMC routes hold the copies. |
 | `doaj` | yes | | Search only (its full-text links are landing pages). |
-| `scite` | yes | | Needs a scite subscription and one sign-in: `paper-fetch scite-login`. Search only; hits carry citation tallies. Not cached. |
+| `scite` | opt-in | | Needs a scite subscription and one sign-in: `paper-fetch scite-login`. Rationed (250 calls a month), so asked only when a search says so. Search only; hits carry citation tallies. Not cached. |
 | `web` | fallback | | SearXNG; identifiers are parsed from URLs and never trusted as open. |
 
 Default locate order: `pmc-s3, europepmc, plos, openalex, biorxiv, openaire, hal, osf, core,
 unpaywall`. Default search set: `openalex, europepmc, pubmed, openaire, plos, osf, hal, doaj,
-core, scite`, with `scite` skipped until someone signs in and `web` asked only when none of those
-returns an open-access hit. NCBI's ID converter
+core`, with `web` asked only when none of those returns an open-access hit and `scite` only when
+a search asks for it. NCBI's ID converter
 fills in missing PMCIDs/PMIDs before providers are asked, and OpenCitations answers the citation
 graph. `paper-fetch providers` lists what is enabled and what each needs, without touching the network.
 
@@ -159,7 +159,21 @@ paper-fetch scite-login     # opens the browser; stores the sign-in in ~/.config
 paper-fetch scite-logout    # forget it
 ```
 
-After that `scite` answers in every search, the MCP server included, and the sign-in renews itself.
+The subscription allows **250 MCP calls a month**, so scite is not in the default search set. Ask
+for it per search, on top of the usual providers:
+
+```bash
+paper-fetch search "tinnitus retraining therapy" --scite
+```
+
+```python
+lib.search("tinnitus retraining therapy", also=["scite"])
+```
+
+Over MCP, `search` takes `scite: true`. scite is asked once per search, with the query as written
+(never a profile's variants), and the sign-in renews itself. To have every search ask it anyway,
+name it in `PAPER_FETCH_SEARCH_PROVIDERS`.
+
 A merged hit that scite found carries `scite`: its tally (`supporting`, `contrasting`,
 `mentioning`, `citingPublications`), scite's open-access status and any editorial notice
 (retraction, correction, concern). scite is search-only: copies still come through the
@@ -251,7 +265,7 @@ Every tool returns one JSON object:
 
 | tool | arguments | `data` |
 |---|---|---|
-| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}` |
+| `search` | `query: str`, `include_closed: bool = false`, `limit: int = 10`, `profile: str = ""`, `collection: str = ""`, `expand: bool = true`, `scite: bool = false` | `{"query", "variants", "profile", "collection", "providers": {name: {"status", ...}}, "hits": [...], "memory": [...], "search_id"}` |
 | `fetch` | `identifier: str`, `collection: str = ""` | a catalogue row (below) plus `"from"` |
 | `profiles` | `slug: str = ""` | `{"profiles": [{"slug", "label", "scope", "anchors", "providers", "origin"}]}`, or one profile's `{"scope", "search_guidance", "terms", "anchors", "measures", "sources", ...}` |
 | `recall` | `query: str = ""`, `profile: str = ""`, `collection: str = ""`, `identifier: str = ""`, `limit: int = 10` | `{"searches": [{"id", "at", "query", "variants", "profile", "collection", "n_hits", "score", "hits": [...]}]}` |

@@ -2,6 +2,7 @@
 
     paper-fetch fetch <doi|W123|pmid:N|PMCN|arxiv:ID> [...] library first, then OpenAlex + OA routes
     paper-fetch search "<query>" [--providers a,b]       every search provider, merged
+                [--scite]                                also ask scite (rationed, so opt-in)
                 [--profile P] [--collection C]           in a discipline / for a project
     paper-fetch profiles [slug]                          discipline profiles, or one in full
     paper-fetch collection [name] [--create] [--profile P] [--description D]
@@ -55,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("search", help="federated search across providers")
     p.add_argument("query")
     p.add_argument("--providers", help="comma-separated provider names")
+    p.add_argument("--scite", action="store_true", help="also ask scite (250 calls a month)")
     p.add_argument("--include-closed", action="store_true")
     p.add_argument("-n", type=int, default=10)
     p.add_argument("--refresh", action="store_true", help="ignore cached answers")
@@ -152,6 +154,7 @@ def _search(lib: Library, a: argparse.Namespace) -> None:
     res = lib.search(
         a.query,
         providers=names,
+        also=["scite"] if a.scite else None,
         oa_only=not a.include_closed,
         limit=a.n,
         refresh=a.refresh,
