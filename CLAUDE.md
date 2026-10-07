@@ -86,7 +86,8 @@ string matching and bookkeeping, so its behaviour is testable and repeatable.
 `fetch` (with `collection`), `library`, `text` (paged, 100,000 characters by default, clamped to
 1,000..100,000), `provenance`, `citations`, `providers`, `status`, `profiles`, `recall`,
 `collections`, `collection`, `create_collection`, `collect`, `uncollect`, `retrieve`, `passages`,
-`index`, `relevance` (scores hit titles against research sub-questions, to order fetches). Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
+`index`, `relevance` (scores hit titles against research sub-questions, to order fetches), `leads`
+(identifiers in URLs the model found by searching the web itself, when a search says `ask_the_web`). Every result is `{"ok": true, "data": ...}` or `{"ok": false, "code": "not_found" |
 "unavailable" | "tool_error", "error": ...}`; `unavailable` is never "zero results". The full
 contract is in [README § MCP server](README.md#mcp-server). The server's instructions to the model
 say open access is a right to read, not to republish. **Storing a copy the user holds is not a
@@ -158,6 +159,25 @@ web hit carries its URL and **identifiers parsed out of the URL or snippet, unve
 `None`; `can_locate` is False, so nothing is ever downloaded from a web result — a parsed DOI goes
 through `fetch()` and the normal providers decide openness. **Web results are not cached**
 (`cacheable = False`): what may be stored depends on the engines SearXNG queried.
+
+### Without a web search of its own, the library asks its caller to search (2026-10-07)
+
+Hosting SearXNG is optional. This library runs no language model, but its caller usually is one,
+and a model's own web search is a better last resort than a scraped meta-search that engines
+block. So when the fallback is wanted (no open-access hit) and `web` did not answer `ok`
+(`SEARXNG_URL` unset, or SearXNG down), the search result carries **`ask_the_web`**: `why`,
+the `query`, what happened to the library's own web search, and `how`. The MCP server's
+instructions tell the model to search the web itself and bring the result URLs to **`leads`**
+(`Library.leads`, MCP `leads`, `paper-fetch leads <url> ...`).
+
+`leads` does for the caller's URLs exactly what the `web` provider does for SearXNG's: it reads a
+DOI, PMID, PMCID or arXiv id out of each with `parse_ids`, marks what is already held, and
+returns a `fetch` value. **Parsed, not resolved; `verified` is always false; no network.** The
+rule is unchanged: nothing is downloaded from a web page, and `fetch` sends the identifier
+through the open-access providers, which decide whether a copy may be kept. A URL with no
+identifier is returned under `no_identifier` rather than dropped.
+
+`web_fallback=False` / `PAPER_FETCH_WEB_FALLBACK=0` turns the request off along with the fallback.
 
 ### Running SearXNG for the fallback
 

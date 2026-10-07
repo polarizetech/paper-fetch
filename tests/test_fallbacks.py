@@ -301,3 +301,124 @@ def test_the_log_holds_one_json_object_per_line() -> None:
     lines = problems.log_path().read_text().splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0])["context"] == {"query": "q"}
+
+
+# -- without a web search of its own, the library asks its caller to search ----------------------
+
+
+def test_with_no_web_search_configured_the_caller_is_asked_to_search() -> None:
+    closed = Hit("closed", "A closed paper", 2020, {"doi": "10.5555/closed"}, False)
+    lib = _lib(Counting("usual", hits=[closed]))
+    res = lib.search("phantom limb", oa_only=False, remember=False)
+    assert res["providers"]["web"] == {
+        "status": "skipped",
+        "why": "needs SEARXNG_URL",
+        "why_ran": "no open-access hit from the scholarly providers",
+    }
+    ask = res["ask_the_web"]
+    assert (ask["why"], ask["query"], ask["web_search_here"]) == (
+        "no open-access hit from the scholarly providers",
+        "phantom limb",
+        "skipped: needs SEARXNG_URL",
+    )
+    assert "`leads`" in ask["how"]
+    assert "`fetch`" in ask["how"]
+    empty = _lib(Counting("usual", hits=[]))
+    assert empty.search("nothing at all", remember=False)["ask_the_web"]["why"] == (
+        "no hits from the scholarly providers"
+    )
+
+
+def test_the_caller_is_not_asked_when_the_fallback_is_off_or_not_needed() -> None:
+    lib = _lib(Counting("usual", hits=[OPEN]))
+    assert "ask_the_web" not in lib.search("x", remember=False)  # an open hit: not needed
+    lib2 = _lib(Counting("usual", hits=[]))
+    assert "ask_the_web" not in lib2.search("x", web_fallback=False, remember=False)
+
+
+def test_the_caller_is_not_asked_when_the_librarys_own_web_search_answered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEARXNG_URL", "https://searx.example")
+    lib, _ = make_library()
+    lib.http = FakeHttp({"searx.example/search": J(fixture("searxng.json"))})
+    lib.search_providers = []
+    res = lib.search("q", remember=False)
+    assert res["providers"]["web"]["status"] == "ok"
+    assert "ask_the_web" not in res
+
+
+def test_the_caller_is_asked_when_the_librarys_own_web_search_is_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SEARXNG_URL", "https://searx.example")
+    lib, _ = make_library()
+    lib.http = FakeHttp({"searx.example/search": Response(502, {}, b"", "")})
+    lib.search_providers = []
+    res = lib.search("q", remember=False)
+    assert res["providers"]["web"]["status"] == "unavailable"
+    assert res["ask_the_web"]["web_search_here"].startswith("unavailable: web (searxng) HTTP 502")
+
+
+def test_leads_reads_identifiers_from_what_the_caller_found_and_marks_what_is_held() -> None:
+    lib, _ = make_library()
+    held = lib.fetch("10.5555/example.001")
+    assert held["full_text"]
+    res = lib.leads(
+        [
+            "https://doi.org/10.5555/EXAMPLE.001",
+            "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0073216",
+            "https://pubmed.ncbi.nlm.nih.gov/24204232/",
+            "https://pmc.ncbi.nlm.nih.gov/articles/PMC3812051/",
+            "https://arxiv.org/abs/2401.01234",
+            "see doi:10.1371/journal.pone.0073216 for details",  # the same paper again
+            "https://lab.example.edu/people/someone",
+        ]
+    )
+    assert [(x["fetch"], x["in_library"], x["full_text_in_library"]) for x in res["leads"]] == [
+        ("10.5555/example.001", True, True),
+        ("10.1371/journal.pone.0073216", False, False),
+        ("pmid:24204232", False, False),
+        ("PMC3812051", False, False),
+        ("arxiv:2401.01234", False, False),
+    ]
+    first = res["leads"][0]
+    assert (first["work"], first["verified"], first["key"]) == (
+        held["work"],
+        False,
+        "doi:10.5555/example.001",
+    )
+    assert res["no_identifier"] == ["https://lab.example.edu/people/someone"]
+    assert lib.leads([]) == {"leads": [], "no_identifier": []}
+
+
+def test_leads_makes_no_network_call() -> None:
+    lib, http = make_library()
+    before = http.calls
+    lib.leads(["https://doi.org/10.5555/x", "https://pubmed.ncbi.nlm.nih.gov/123456/"])
+    assert http.calls == before
+
+
+def test_cli_asks_for_a_web_search_and_reads_leads(capsys: pytest.CaptureFixture[str]) -> None:
+    lib = _lib(Counting("usual", hits=[]))
+    cli.main(["search", "x"], library=lib)
+    out = capsys.readouterr().out
+    assert "no open copy found (no hits from the scholarly providers)" in out
+    assert "paper-fetch leads <url>" in out
+    cli.main(["leads", "https://doi.org/10.5555/abc", "https://nowhere.example/"], library=lib)
+    out = capsys.readouterr().out
+    assert "10.5555/abc" in out
+    assert "no identifier in: https://nowhere.example/" in out
+
+
+def test_mcp_leads_tool() -> None:
+    from paper_fetch import mcp_server  # noqa: PLC0415
+
+    lib, _ = make_library()
+    mcp_server._library = lib
+    try:
+        res = mcp_server.leads(["https://doi.org/10.5555/abc"])
+    finally:
+        mcp_server._library = None
+    assert res["ok"]
+    assert res["data"]["leads"][0]["fetch"] == "10.5555/abc"

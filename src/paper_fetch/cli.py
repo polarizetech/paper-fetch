@@ -18,6 +18,7 @@
     paper-fetch add <file.pdf> <id> --rights "..."       a copy you legitimately hold
     paper-fetch citations <id> [--references] [-n N]     who cites it (or what it cites)
     paper-fetch scite-login | scite-logout               sign this machine in to scite (browser)
+    paper-fetch leads <url> [...]                        identifiers in URLs you found on the web
     paper-fetch problems [-n N] [--trace]                provider defects logged on this machine
     paper-fetch status | rebuild-index | adopt-orphans
 
@@ -123,6 +124,8 @@ def build_parser() -> argparse.ArgumentParser:
         "scite-login", help="sign in to scite in the browser (enables the scite provider)"
     )
     sub.add_parser("scite-logout", help="forget this machine's scite sign-in")
+    p = sub.add_parser("leads", help="identifiers in URLs you found on the web (no network)")
+    p.add_argument("found", nargs="+")
     p = sub.add_parser("problems", help="provider defects logged on this machine")
     p.add_argument("-n", type=int, default=10)
     p.add_argument("--trace", action="store_true", help="print each traceback")
@@ -176,6 +179,11 @@ def _search(lib: Library, a: argparse.Namespace) -> None:
         else:
             extra = st.get("why")
         print(f"  {name:16s} {st['status']:12s} {extra}")
+    if res.get("ask_the_web"):
+        print(
+            f"  no open copy found ({res['ask_the_web']['why']}) and no web search is set up "
+            "here.\n  Search the web yourself, then: paper-fetch leads <url> [<url> ...]"
+        )
     for b in res.get("broken", []):
         print(
             f"! BROKEN: {b['provider']} failed because of a defect, not an outage: {b['error']}\n"
@@ -352,6 +360,14 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         print(f"signed in to scite; sign-in stored at {path} (0600)")
     elif a.cmd == "scite-logout":
         print("scite sign-in removed" if scite_auth.logout() else "no scite sign-in on file")
+    elif a.cmd == "leads":
+        res = lib.leads(a.found)
+        for ld in res["leads"]:
+            held = "■" if ld["full_text_in_library"] else "□" if ld["in_library"] else " "
+            print(f" {held} {ld['fetch']:40s} from {ld['from'][:60]}")
+        for item in res["no_identifier"]:
+            print(f"   no identifier in: {item[:80]}")
+        print(LEGEND + "   then: paper-fetch fetch <id>")
     elif a.cmd == "problems":
         rows = problems.recent(a.n)
         print(f"{len(rows)} shown, from {problems.log_path()}")
