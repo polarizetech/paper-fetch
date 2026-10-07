@@ -32,7 +32,15 @@ from typing import Any
 from .http import Http, HttpClient
 from .ids import Ident
 
-__all__ = ["BASE", "CONTENT", "BadApiKey", "NeedsApiKey", "OpenAlex", "Usage"]
+__all__ = [
+    "BASE",
+    "CONTENT",
+    "BadApiKey",
+    "NeedsApiKey",
+    "OpenAlex",
+    "OpenAlexUnavailable",
+    "Usage",
+]
 
 BASE = "https://api.openalex.org"
 CONTENT = "https://content.openalex.org"
@@ -51,6 +59,15 @@ class BadApiKey(RuntimeError):
 
 class NeedsApiKey(RuntimeError):
     pass
+
+
+class OpenAlexUnavailable(RuntimeError):
+    """OpenAlex is out of allowance or failing on its side: an outside problem, not a defect.
+    `pause_s` is how long to leave it alone."""
+
+    def __init__(self, message: str, *, pause_s: float | None = None) -> None:
+        super().__init__(message)
+        self.pause_s = pause_s
 
 
 @dataclass
@@ -111,9 +128,13 @@ class OpenAlex:
         if r.status == 404:
             return None
         if r.status == 429:
-            raise RuntimeError(
-                f"OpenAlex rate limit reached (remaining ${self.usage.remaining_usd})"
+            # The allowance is per day, so asking again within the hour only spends requests.
+            raise OpenAlexUnavailable(
+                f"OpenAlex rate limit reached (remaining ${self.usage.remaining_usd})",
+                pause_s=3600.0,
             )
+        if r.status >= 500:
+            raise OpenAlexUnavailable(f"OpenAlex answered HTTP {r.status} on {path}")
         if r.status != 200:
             raise RuntimeError(f"OpenAlex {r.status} on {path}: {r.body[:200]!r}")
         return json.loads(r.body)

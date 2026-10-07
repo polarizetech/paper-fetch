@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -46,6 +47,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import problems
 from .citations import DIRECTIONS, OpenCitations
 from .collection import Collections
 from .http import HttpClient
@@ -55,7 +57,15 @@ from .memory import SearchMemory, concepts
 from .openalex import OpenAlex
 from .passages import Passage, PassageIndex, embedder_from_env, index_path
 from .profiles import Profile, load_profiles, vocabulary
-from .providers import FALLBACK_SEARCH, Hit, Ids, Provider, ProviderUnavailable, build
+from .providers import (
+    FALLBACK_SEARCH,
+    PAUSE_OUTAGE_S,
+    Hit,
+    Ids,
+    Provider,
+    ProviderUnavailable,
+    build,
+)
 from .rerank import Reranker, reranker_from_env
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
@@ -151,6 +161,8 @@ class Library:
         )
         self._search_providers = list(search_providers) if search_providers is not None else None
         self._opted_in: dict[str, Provider] = {}
+        # name -> (monotonic time it may be asked again, why it was paused). Per process.
+        self._paused: dict[str, tuple[float, str]] = {}
         self.retry_after_days = retry_after_days
         self.search_ttl_days = search_ttl_days
         # One Library serves every tool call of an MCP server, each on its own worker thread.
@@ -1058,6 +1070,17 @@ class Library:
         }
         if variant_reports:
             out["variant_providers"] = variant_reports
+        broken = {
+            name: r["why"]
+            for rep in (report, *variant_reports.values())
+            for name, r in rep.items()
+            if r.get("broken")
+        }
+        if broken:
+            out["broken"] = [
+                {"provider": n, "error": why, "log": str(problems.log_path())}
+                for n, why in broken.items()
+            ]
         if remember:
             out["search_id"] = self.memory.record(
                 {
@@ -1076,6 +1099,30 @@ class Library:
                 }
             )["id"]
         return out
+
+    def _pause(self, name: str, seconds: float, why: str) -> None:
+        with self._lock:
+            self._paused[name] = (time.monotonic() + seconds, why)
+
+    def _paused_why(self, name: str) -> str | None:
+        """Why a provider is not being asked right now, or None if it may be."""
+        with self._lock:
+            until, why = self._paused.get(name, (0.0, ""))
+            left = until - time.monotonic()
+            if left <= 0:
+                self._paused.pop(name, None)
+                return None
+        span = (
+            "for the rest of this process" if left == float("inf") else f"for {math.ceil(left)} s"
+        )
+        return f"not asked {span}, after: {why}"
+
+    def paused(self) -> dict[str, str]:
+        """Providers being left alone after an outside failure, and why. `refresh=True` on a
+        search asks them anyway."""
+        with self._lock:
+            names = list(self._paused)
+        return {n: why for n in names if (why := self._paused_why(n))}
 
     def _ask(
         self,
@@ -1104,14 +1151,30 @@ class Library:
             hits = [Hit.from_json(h) for h in cached["hits"]]
             report[p.name] = {"status": "cache", "n": len(hits), "cost_usd": 0.0}
         else:
+            held_off = None if refresh else self._paused_why(p.name)
+            if held_off:
+                report[p.name] = {"status": "unavailable", "why": held_off, "paused": True}
+                return
             spent = self.oa.spent_usd
             try:
                 hits = p.search(query, oa_only=oa_only, limit=limit)
-            except ProviderUnavailable as e:
+            except (ProviderUnavailable, ConnectionError) as e:
+                # An outside problem. The other providers answer; this one is left alone for a
+                # while, so a dead service or a spent allowance is not asked again by every search.
+                pause = getattr(e, "pause_s", None)
+                self._pause(p.name, PAUSE_OUTAGE_S if pause is None else pause, str(e))
                 report[p.name] = {"status": "unavailable", "why": str(e)}
                 return
             except Exception as e:  # noqa: BLE001 -- reported by name; the search goes on
-                report[p.name] = {"status": "error", "why": f"{type(e).__name__}: {str(e)[:120]}"}
+                # A defect, here or in how the service is used. Not paused (waiting fixes nothing)
+                # and not left as one status among ten: logged with its traceback and named in
+                # the search's `broken` list.
+                problems.record(p.name, "search", e, {"query": query, "oa_only": oa_only})
+                report[p.name] = {
+                    "status": "error",
+                    "why": f"{type(e).__name__}: {str(e)[:200]}",
+                    "broken": True,
+                }
                 return
             if p.cacheable:
                 entry = {
@@ -1398,4 +1461,9 @@ class Library:
             "searches_remembered": len(self.memory.entries()),
             "profiles": sorted(self.profiles()),
             "passages": self.passages.stats(),
+            "paused_providers": self.paused(),
+            "provider_problems": {
+                "logged": len(problems.recent(0)),
+                "log": str(problems.log_path()),
+            },
         }

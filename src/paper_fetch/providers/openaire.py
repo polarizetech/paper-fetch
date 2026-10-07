@@ -56,8 +56,7 @@ class OpenAIRE(Provider):
 
     def _results(self, params: str) -> list[dict[str, Any]]:
         r = self._get(f"{self.BASE}?{params}", {"Accept": "application/json"})
-        if r.status != 200:
-            return []
+        self._answered(r)
         return json.loads(r.body).get("results") or []
 
     @staticmethod

@@ -28,27 +28,47 @@ search set and `metered` is True: a search asks it only when told to (`also=["sc
 or by naming it), and then once, with the query as written, never with a profile's variants. Past
 the limit the tool answers with an error, reported `unavailable`.
 
-## Failure
+## Failure, of two kinds
 
-Not signed in is `skipped` (`available()` is False, no network). A refused or expired sign-in, a
-429, a tool error or an unreachable server is `ProviderUnavailable`, by name. A 401 gets one token
-refresh and one retry; a 404 on a session gets one new session.
+Not signed in is `skipped` (`available()` is False, no network). A 401 gets one token refresh and
+one retry; a 404 on a session gets one new session. Beyond that:
+
+- **An outside problem is `ProviderUnavailable`**, and the search carries on with the other
+  providers: an unreachable server, a 5xx, a 429, a refused or expired sign-in, and a tool error
+  that says so in words. **A spent allowance** ("monthly MCP usage limit") pauses scite for the
+  rest of the process, so it is not asked again by every search; the others pause briefly.
+- **A defect is `ProviderBroken`**, logged and named in the search's `broken` list: an answer
+  that is not JSON-RPC, a 4xx or a JSON-RPC error on our request, a tool error of no recognised
+  kind, or an answer without a `hits` list (a changed format must not read as "no results").
 """
 
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 from typing import Any
 
 from .. import scite_auth
 from ..http import HttpClient, Response
-from .base import Hit, Provider, ProviderUnavailable, clean_doi
+from .base import (
+    PAUSE_QUOTA_S,
+    PAUSE_RATE_LIMIT_S,
+    Hit,
+    Provider,
+    ProviderBroken,
+    ProviderUnavailable,
+    clean_doi,
+)
 
 __all__ = ["Scite"]
 
 _PROTOCOL = "2025-06-18"
+# A tool error says in words which kind it is. A spent allowance will not come back in this
+# process; a busy or failing service will; anything else is treated as a defect and flagged.
+_SPENT = re.compile(r"usage limit|monthly|quota|pay-as-you-go|allowance|subscription", re.I)
+_PASSING = re.compile(r"busy|overload|unavailable|timed? ?out|temporar|try again|rate.?limit", re.I)
 _TALLY = ("total", "supporting", "contrasting", "mentioning", "citingPublications")
 
 
@@ -74,13 +94,13 @@ def _message(r: Response, want_id: int) -> dict[str, Any]:
                 continue
             if isinstance(msg, dict) and msg.get("id") == want_id:
                 return msg
-        raise ProviderUnavailable("scite answered with a stream that held no result")
+        raise ProviderBroken("scite answered with a stream that held no result")
     try:
         msg = json.loads(r.body)
     except ValueError as e:
-        raise ProviderUnavailable("scite answered with something that is not JSON") from e
+        raise ProviderBroken("scite answered with something that is not JSON") from e
     if not isinstance(msg, dict):
-        raise ProviderUnavailable("scite answered with something that is not a JSON-RPC message")
+        raise ProviderBroken("scite answered with something that is not a JSON-RPC message")
     return msg
 
 
@@ -153,7 +173,9 @@ class Scite(Provider):
                     "scite refused the sign-in: run `paper-fetch scite-login`"
                 )
         if r.status == 429:
-            raise ProviderUnavailable("scite rate-limited us (HTTP 429)")
+            raise ProviderUnavailable(
+                "scite rate-limited us (HTTP 429)", pause_s=PAUSE_RATE_LIMIT_S
+            )
         return r
 
     def _request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -164,12 +186,15 @@ class Scite(Provider):
             self._session = self._protocol = None  # the server forgot the session: start one
             self._open()
             return self._request(method, params)
-        if r.status != 200:
+        if r.status >= 500 or r.status in (402, 403):
             raise ProviderUnavailable(f"scite HTTP {r.status} on {method}")
+        if r.status != 200:  # it rejected what we sent: a defect, not an outage
+            detail = r.body[:160].decode("utf-8", "replace").strip()
+            raise ProviderBroken(f"scite rejected {method} (HTTP {r.status}): {detail}")
         msg = _message(r, rid)
-        if msg.get("error"):
+        if msg.get("error"):  # a JSON-RPC error is about the request, so it is ours to fix
             why = (msg["error"] or {}).get("message") or "error"
-            raise ProviderUnavailable(f"scite {method}: {str(why)[:160]}")
+            raise ProviderBroken(f"scite rejected {method}: {str(why)[:160]}")
         if method == "initialize":
             self._session = r.headers.get("mcp-session-id")
         result = msg.get("result")
@@ -198,16 +223,24 @@ class Scite(Provider):
             (c.get("text") for c in res.get("content") or [] if c.get("type") == "text"), None
         )
         if res.get("isError"):
-            raise ProviderUnavailable(f"scite {tool}: {str(text or 'tool error')[:160]}")
+            said = str(text or "tool error")
+            if _SPENT.search(said):
+                raise ProviderUnavailable(f"scite {tool}: {said[:160]}", pause_s=PAUSE_QUOTA_S)
+            if _PASSING.search(said):
+                raise ProviderUnavailable(f"scite {tool}: {said[:160]}")
+            raise ProviderBroken(f"scite {tool} failed: {said[:200]}")
         data = res.get("structuredContent")
         if not isinstance(data, dict) and text:
             try:
                 data = json.loads(text)
             except ValueError as e:
-                raise ProviderUnavailable(f"scite {tool} returned text, not JSON") from e
+                raise ProviderBroken(f"scite {tool} returned text, not JSON") from e
         if isinstance(data, dict) and "hits" not in data and isinstance(data.get("result"), dict):
             data = data["result"]
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict) or not isinstance(data.get("hits"), list):
+            keys = sorted(data) if isinstance(data, dict) else type(data).__name__
+            raise ProviderBroken(f"scite {tool} answered without a `hits` list: {keys}")
+        return data
 
     # -- search ---------------------------------------------------------------------------------
 

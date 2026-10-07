@@ -93,7 +93,12 @@ mcp = _Server(
         "`profile` (see `profiles`) to `search`; for a project, keep its papers in a named "
         "`collection`. Before searching, `recall` shows what earlier searches on the same concept "
         "found. `retrieve` returns the passages of held papers that best answer a question, with "
-        "exact offsets, for quoting. Open access is a right to read, not to republish."
+        "exact offsets, for quoting. Open access is a right to read, not to republish. In a "
+        "`search`, a provider that is `unavailable` has an outside problem (down, rate-limited, "
+        "allowance spent): the other providers have answered, so carry on with their hits and "
+        "do not retry it. A result with `broken` is different: that provider failed because of "
+        "a defect, its hits are missing, and it will keep failing until fixed. Tell the user, "
+        "quoting the `broken` entry."
     ),
 )
 

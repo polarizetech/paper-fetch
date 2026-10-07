@@ -25,6 +25,7 @@ import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from . import problems
 from .openalex import BadApiKey
 from .providers import Ids, Location, Provider, ProviderUnavailable
 from .text import is_html, is_pdf, looks_like_prose, pdf_text, xml_text
@@ -122,10 +123,11 @@ def resolve(ids: Ids, providers: Sequence[Provider]) -> Resolution:
             locs = p.locate(ids)
         except BadApiKey:
             raise
-        except ProviderUnavailable as e:
+        except (ProviderUnavailable, ConnectionError) as e:
             attempts.append((p.name, f"unavailable: {e}"))
             continue
         except Exception as e:  # noqa: BLE001 -- one broken provider must not stop the others
+            problems.record(p.name, "locate", e, {k: v for k, v in ids.items() if k[:1] != "_"})
             attempts.append((p.name, f"error: {type(e).__name__}: {str(e)[:120]}"))
             continue
         if not locs:

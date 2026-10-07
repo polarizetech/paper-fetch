@@ -18,6 +18,7 @@ from paper_fetch.providers import (
     Location,
     OpenAIRE,
     Provider,
+    ProviderBroken,
     ProviderUnavailable,
     build,
     clean_doi,
@@ -183,7 +184,8 @@ def test_europepmc_locate() -> None:
     assert "PMCID%3APMC9" in http.log[-1]
     assert len(p.locate({"doi": "10.5555/a"})) == 1
     assert p.locate({}) == []
-    assert EuropePMC(FakeHttp()).locate({"doi": "10.5555/a"}) == []
+    empty = FakeHttp({"europepmc/webservices/rest/search": J({"resultList": {"result": []}})})
+    assert EuropePMC(empty).locate({"doi": "10.5555/a"}) == []
 
 
 # ---------------------------------------------------------------------------------- PubMed
@@ -222,7 +224,8 @@ def test_pubmed_empty_and_failed() -> None:
     assert (
         PubMed(FakeHttp({"esearch.fcgi": J({"esearchresult": {"idlist": []}})})).search("x") == []
     )
-    assert PubMed(FakeHttp()).search("x") == []
+    with pytest.raises(ProviderBroken, match="pubmed rejected our request \\(HTTP 404\\)"):
+        PubMed(FakeHttp()).search("x")
 
 
 # ---------------------------------------------------------------------------------- PMC S3
@@ -379,7 +382,7 @@ def test_plos_search_builds_locations_without_a_lookup() -> None:
     p.search('"computational research"')
     assert "%22computational%20research%22" in http.log[-1]
     assert p.locate({"doi": "10.5555/not-plos"}) == []
-    assert PLOS(FakeHttp()).search("x") == []
+    assert PLOS(FakeHttp({"api.plos.org": J({"response": {"docs": []}})})).search("x") == []
 
 
 # ---------------------------------------------------------------------------------- OSF
@@ -426,9 +429,32 @@ def test_doaj_is_search_only_and_takes_the_doi_not_the_issn() -> None:
     assert [(h.ids["doi"], h.locations, h.year) for h in p.search("example")] == [
         ("10.5555/doaj.001", [], 2021)
     ]
-    assert DOAJ(FakeHttp()).search("x") == []
+    assert DOAJ(FakeHttp({"doaj.org": J({"results": []})})).search("x") == []
 
 
 def test_empty_answers_are_empty() -> None:
-    for cls in (OpenAIRE, HAL, OSF, Core):
-        assert cls(FakeHttp()).search("x", oa_only=False) == []
+    empty = {
+        OpenAIRE: {"results": []},
+        HAL: {"response": {"docs": []}},
+        OSF: {"data": [], "included": []},
+        Core: {"results": []},
+    }
+    for cls, body in empty.items():
+        assert cls(FakeHttp({"": J(body)})).search("x", oa_only=False) == []
+
+
+ALL_QUERY_PROVIDERS = (OpenAIRE, HAL, OSF, Core, EuropePMC, PubMed, PLOS, DOAJ)
+
+
+@pytest.mark.parametrize("cls", ALL_QUERY_PROVIDERS)
+def test_a_failed_query_is_never_an_empty_answer(cls: type[Provider]) -> None:
+    """A provider that answers 500, or rejects the request, must not read as "no results"."""
+    down = FakeHttp({"": Response(503, {}, b"upstream down", "")})
+    with pytest.raises(ProviderUnavailable, match="HTTP 503"):
+        cls(down).search("x", oa_only=False)
+    refused = FakeHttp({"": Response(403, {}, b"", "")})
+    with pytest.raises(ProviderUnavailable, match="HTTP 403"):
+        cls(refused).search("x", oa_only=False)
+    rejected = FakeHttp({"": Response(400, {}, b"unknown field `everything`", "")})
+    with pytest.raises(ProviderBroken, match="rejected our request \\(HTTP 400\\): unknown field"):
+        cls(rejected).search("x", oa_only=False)

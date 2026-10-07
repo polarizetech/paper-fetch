@@ -19,7 +19,16 @@ from collections.abc import Sequence
 from ..http import HttpClient
 from ..openalex import OpenAlex
 from .adapters import PMCS3, Biorxiv, Core, EuropePMC, OpenAlexProvider, PubMed, Unpaywall
-from .base import Hit, Ids, Location, Provider, ProviderUnavailable, clean_doi
+from .base import (
+    PAUSE_OUTAGE_S,
+    Hit,
+    Ids,
+    Location,
+    Provider,
+    ProviderBroken,
+    ProviderUnavailable,
+    clean_doi,
+)
 from .openaire import OpenAIRE
 from .repositories import DOAJ, HAL, OSF, PLOS
 from .scite import Scite
@@ -32,6 +41,7 @@ __all__ = [
     "FALLBACK_SEARCH",
     "HAL",
     "OSF",
+    "PAUSE_OUTAGE_S",
     "PLOS",
     "REGISTRY",
     "Hit",
@@ -39,6 +49,7 @@ __all__ = [
     "Location",
     "OpenAIRE",
     "Provider",
+    "ProviderBroken",
     "ProviderUnavailable",
     "Scite",
     "WebSearch",

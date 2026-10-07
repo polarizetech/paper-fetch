@@ -183,8 +183,38 @@ provider). `tests/test_guarantees.py` asserts there is no Google Scholar and no 
 route.
 
 **Federated search reports every provider by name** — `ok`, `cache`, `skipped` (missing key),
-`unavailable` (429 / unreachable) or `error` — and merges hits across providers by DOI → PMCID →
-PMID → OpenAlex → arXiv. A repeat search is served from the store at $0.
+`unavailable` (an outside problem) or `error` (a defect) — and merges hits across providers by
+DOI → PMCID → PMID → OpenAlex → arXiv. A repeat search is served from the store at $0.
+
+## ⭐ When a provider fails: wait out an outside problem, flag a defect
+
+A search asks every provider and merges what answers, so one failing never stops the rest, and
+`web` runs last when none of them finds an open copy. What matters is telling the two kinds of
+failure apart, because they need opposite handling.
+
+- **An outside problem is `ProviderUnavailable`** (or a bare `ConnectionError`): unreachable, a
+  5xx, a 403, a 429, a spent allowance. The report says `unavailable` and why, and **`Library`
+  then leaves that provider alone**: `PAUSE_OUTAGE_S` 60 s by default, `PAUSE_RATE_LIMIT_S`
+  300 s after a 429, an hour after OpenAlex's daily allowance, and `PAUSE_QUOTA_S` (the rest of
+  the process) after scite's monthly one. While paused it is not called: its report is
+  `unavailable` with `paused: true` and "not asked for N s, after: <the original reason>". A
+  cached answer is still served; `refresh=True` asks anyway; `lib.paused()` and `status()` list
+  what is paused. The pause is per process and in memory.
+- **A defect is `ProviderBroken`, or any exception an adapter did not expect**: the service
+  rejected our request (a 4xx other than 403/429, a 401 on a key) or answered in a shape the
+  adapter does not read. Waiting fixes nothing, so it is **never paused and never quiet**: the
+  report says `error` with `broken: true`, the search result carries a top-level **`broken`**
+  list (`provider`, `error`, `log`), the CLI prints `! BROKEN: ...` on stderr, the MCP server's
+  instructions tell the model to tell the user, and `problems.py` appends the traceback to
+  `provider-problems.jsonl` beside the passage index (`PAPER_FETCH_PROBLEMS`; `paper-fetch
+  problems --trace`). A defect met while locating a copy is logged the same way.
+- **Why this was needed (2026-10-07).** Nine query helpers did `if r.status != 200: return []`,
+  so a provider answering 500, or rejecting a malformed query with 400, was reported **`ok`, 0
+  hits**: an outage or a bug read as "the literature has nothing". They now go through
+  `Provider._answered`, which raises one kind or the other. It is for QUERY endpoints only, which
+  answer 200 with an empty list when nothing matches; a lookup by identifier may still take a 404
+  as "not known". Run live after the change: all nine default providers answered 200, including
+  for a nonsense query, so none had been failing silently that day.
 
 **Identifiers are enriched before any provider is asked.** OpenAlex's record for a 2014 PLOS paper
 had no PMCID, so the PMC bucket — the most verifiable route — reported "no copy" for a paper that is
