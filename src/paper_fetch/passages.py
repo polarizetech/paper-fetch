@@ -17,12 +17,18 @@ loses nothing; `paper-fetch index` rebuilds it.
   and supports nothing.
 - **Embeddings are optional and deterministic.** `PAPER_FETCH_EMBED_MODEL` (e.g. `bge-m3`) names a
   model served by an Ollama-compatible endpoint (`PAPER_FETCH_EMBED_URL`, default
-  `http://127.0.0.1:11434`); it turns text into vectors and generates nothing. Unset, retrieval is
+  `http://127.0.0.1:11434`) or an OpenAI-compatible one (a URL ending in `/v1`, see
+  `embedder_from_env`); it turns text into vectors and generates nothing. Unset, retrieval is
   lexical. Vectors need numpy (the `retrieval` extra). An index built with one model refuses
   another: vectors from different models are not comparable.
 
-A few hundred papers is ~10^4 passages, so dense search is an exact matrix product. There is no
-approximate-nearest-neighbour index to tune, drift, or explain.
+Dense search is an exact matrix product: there is no approximate-nearest-neighbour index to tune,
+drift, or explain. The matrix is read from a half-precision copy beside the index
+(`<index>.vectors/`), memory-mapped, so every process on the machine shares one copy in the page
+cache instead of each holding its own; at 1024 dimensions that is 2 KB a passage, about 330 MB for
+160,000. The copy is named by the vectors it holds and rebuilt when they change, by this process or
+another. Half precision moves a cosine by about 1e-3, far below the gaps between the passages a
+query ranks first.
 """
 
 from __future__ import annotations
@@ -47,6 +53,7 @@ __all__ = [
     "HIDDEN",
     "Embedder",
     "OllamaEmbedder",
+    "OpenAIEmbedder",
     "Passage",
     "PassageIndex",
     "chunk",
@@ -54,6 +61,7 @@ __all__ = [
     "embedder_from_env",
     "fts_query",
     "index_path",
+    "key_from_env",
 ]
 
 #: The version of `chunk`. A paper indexed by an older one is re-chunked the next time it is
@@ -245,13 +253,73 @@ class OllamaEmbedder:
         return out["embeddings"]
 
 
+class OpenAIEmbedder:
+    """Vectors from an OpenAI-compatible `/embeddings` endpoint (a hosted bge-m3, for example).
+
+    `model` is the provider's name for the model (e.g. `BAAI/bge-m3`); the index records
+    PAPER_FETCH_EMBED_MODEL, the model's identity, so a local and a hosted copy of the same model
+    can serve one index.
+    """
+
+    def __init__(
+        self,
+        model: str,
+        url: str,
+        *,
+        key: str = "",
+        timeout: float = 120,
+        http: Http | None = None,
+        batch: int = 64,
+    ) -> None:
+        self.model, self.url, self.timeout, self.batch = model, url.rstrip("/"), timeout, batch
+        self.headers = {"Authorization": f"Bearer {key}"} if key else {}
+        self.http = http or Http()
+
+    def __call__(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for i in range(0, len(texts), self.batch):
+            payload = {"model": self.model, "input": texts[i : i + self.batch]}
+            try:
+                body = self.http.post_json(
+                    f"{self.url}/embeddings", payload, timeout=self.timeout, headers=self.headers
+                )
+            except ConnectionError as e:
+                raise ConnectionError(f"embedding model {self.model}: {e}") from e
+            rows = sorted(body["data"], key=lambda r: r.get("index", 0))
+            out.extend(r["embedding"] for r in rows)
+        return out
+
+
+def key_from_env(name: str) -> str:
+    """A secret from `<name>`, else from the file named by `<name>_FILE`; never logged."""
+    value = os.environ.get(name, "").strip()
+    path = os.environ.get(f"{name}_FILE", "").strip()
+    if not value and path:
+        value = Path(path).expanduser().read_text().strip()
+    return value
+
+
 def embedder_from_env() -> tuple[str, Embedder | None]:
-    """(model name, embedder) from PAPER_FETCH_EMBED_MODEL / _URL; ("", None) when unset."""
+    """(model name, embedder) from the PAPER_FETCH_EMBED_* settings; ("", None) when unset.
+
+    PAPER_FETCH_EMBED_API picks the protocol: `ollama` (`/api/embed`, the default) or `openai`
+    (`/embeddings`, the default when PAPER_FETCH_EMBED_URL ends in `/v1`). For `openai`,
+    PAPER_FETCH_EMBED_API_MODEL is the provider's name for the model (default: the
+    PAPER_FETCH_EMBED_MODEL value) and PAPER_FETCH_EMBED_KEY (or _KEY_FILE) its key.
+    """
     model = os.environ.get("PAPER_FETCH_EMBED_MODEL", "").strip()
     if not model:
         return "", None
-    url = os.environ.get("PAPER_FETCH_EMBED_URL", "http://127.0.0.1:11434")
-    return model, OllamaEmbedder(model, url)
+    url = os.environ.get("PAPER_FETCH_EMBED_URL", "http://127.0.0.1:11434").strip()
+    api = os.environ.get("PAPER_FETCH_EMBED_API", "").strip().lower()
+    if not api:
+        api = "openai" if url.rstrip("/").endswith("/v1") else "ollama"
+    if api == "ollama":
+        return model, OllamaEmbedder(model, url)
+    if api == "openai":
+        remote = os.environ.get("PAPER_FETCH_EMBED_API_MODEL", "").strip() or model
+        return model, OpenAIEmbedder(remote, url, key=key_from_env("PAPER_FETCH_EMBED_KEY"))
+    raise RuntimeError(f"PAPER_FETCH_EMBED_API must be 'ollama' or 'openai', not {api!r}")
 
 
 def index_path() -> Path:
@@ -280,6 +348,43 @@ def _normalise(np: Any, vec: Sequence[float] | Any) -> Any:
     arr = np.asarray(vec, dtype=np.float32)
     norm = float(np.linalg.norm(arr))
     return arr / norm if norm else arr
+
+
+#: Rows scored at once. Half-precision rows are widened to float32 a block at a time, so a query
+#: never holds a full-precision copy of the matrix (64 MB a block at 1024 dimensions).
+SCORE_BLOCK = 16384
+
+
+def _scores(np: Any, mat: Any, query: Any) -> Any:
+    out = np.empty(len(mat), dtype=np.float32)
+    for start in range(0, len(mat), SCORE_BLOCK):
+        block = mat[start : start + SCORE_BLOCK]
+        out[start : start + len(block)] = block.astype(np.float32) @ query
+    return out
+
+
+def _write_vectors(folder: Path, ids_file: Path, mat_file: Path, ids: Any, mat: Any) -> None:
+    """Write the shared copy atomically, then drop superseded ones.
+
+    Two processes may build the same copy at once; each writes its own temporary file and the
+    renames are atomic, so readers only ever see a complete file. A superseded copy another
+    process still has mapped stays readable until it lets go: unlinking removes the name only.
+    """
+    np = _numpy()
+    folder.mkdir(parents=True, exist_ok=True)
+    tag = f".{os.getpid()}.{threading.get_ident()}.tmp"
+    for final, array in ((mat_file, mat), (ids_file, ids)):
+        tmp = final.with_name(final.name + tag)
+        with tmp.open("wb") as fh:
+            np.save(fh, array)
+        os.replace(tmp, final)
+    written = mat_file.stat().st_mtime
+    for old in folder.glob("*.npy"):
+        try:
+            if old not in (ids_file, mat_file) and old.stat().st_mtime < written:
+                old.unlink()  # never a newer copy another process has just written
+        except FileNotFoundError:
+            pass
 
 
 def _locked(method: Callable[..., Any]) -> Callable[..., Any]:
@@ -320,6 +425,8 @@ class PassageIndex:
         with self.db:
             self.db.execute("insert or ignore into meta values ('embedding_model', ?)", (model,))
         self._matrix: tuple[Any, Any] | None = None
+        self._matrix_key: tuple[int, int, int] | None = None
+        self._data_version = -1
         self._np: Any = _numpy() if self.embed else None
 
     def close(self) -> None:
@@ -477,19 +584,57 @@ class PassageIndex:
         }
 
     def _vectors(self) -> tuple[Any, Any]:
-        np = self._np
-        if self._matrix is None:
-            rows = self.db.execute(
-                "select passage_id, vec from vectors order by passage_id"
-            ).fetchall()
-            ids = np.array([r[0] for r in rows], dtype=np.int64)
-            mat = (
-                np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows])
-                if rows
-                else np.zeros((0, 1), dtype=np.float32)
-            )
-            self._matrix = (ids, mat)
+        """(passage ids, float16 matrix), current with the file even when another process wrote.
+
+        `pragma data_version` changes only when another connection commits, so an unchanged index
+        costs one pragma per search; this process's own writes reset the matrix directly.
+        """
+        version = self.db.execute("pragma data_version").fetchone()[0]
+        if self._matrix is not None and version == self._data_version:
+            return self._matrix
+        key = self.db.execute(
+            "select count(*), coalesce(max(passage_id), 0), coalesce(sum(passage_id), 0) "
+            "from vectors"
+        ).fetchone()
+        if self._matrix is None or tuple(key) != self._matrix_key:
+            self._matrix, self._matrix_key = self._load_vectors(tuple(key))
+        self._data_version = version
         return self._matrix
+
+    def _load_vectors(self, key: tuple[int, int, int]) -> tuple[tuple[Any, Any], Any]:
+        np = self._np
+        if key[0] == 0:
+            return (np.zeros(0, dtype=np.int64), np.zeros((0, 1), dtype=np.float16)), key
+        folder = self.path.with_name(self.path.name + ".vectors")
+        stem = "-".join(str(k) for k in key)
+        ids_file, mat_file = folder / f"{stem}.ids.npy", folder / f"{stem}.f16.npy"
+        if not (ids_file.exists() and mat_file.exists()):
+            ids, mat = self._read_vectors()
+            key = (len(ids), int(ids.max()), int(ids.sum()))  # what was read, if it moved on
+            stem = "-".join(str(k) for k in key)
+            ids_file, mat_file = folder / f"{stem}.ids.npy", folder / f"{stem}.f16.npy"
+            try:
+                _write_vectors(folder, ids_file, mat_file, ids, mat)
+            except OSError:
+                return (ids, mat), key  # a read-only location: keep this process's own copy
+        try:
+            return (np.load(ids_file), np.load(mat_file, mmap_mode="r")), key
+        except FileNotFoundError:  # superseded and removed between the check and the load
+            ids, mat = self._read_vectors()
+            return (ids, mat), (len(ids), int(ids.max()), int(ids.sum()))
+
+    def _read_vectors(self) -> tuple[Any, Any]:
+        """Every vector, narrowed to float16 a batch at a time (never all of them at float32)."""
+        np = self._np
+        cur = self.db.execute("select passage_id, vec from vectors order by passage_id")
+        ids: list[int] = []
+        blocks: list[Any] = []
+        while rows := cur.fetchmany(4096):
+            ids.extend(r[0] for r in rows)
+            blocks.append(
+                np.vstack([np.frombuffer(r[1], dtype=np.float32) for r in rows]).astype(np.float16)
+            )
+        return np.array(ids, dtype=np.int64), np.vstack(blocks)
 
     def query_vectors(self, queries: list[str]) -> list[Any]:
         """One vector per query, in one embedding call; Nones when retrieval is lexical."""
@@ -539,7 +684,7 @@ class PassageIndex:
             np = self._np
             ids, mat = self._vectors()
             if len(ids):
-                scores = mat @ _normalise(np, query_vector)
+                scores = _scores(np, mat, _normalise(np, query_vector))
                 if allowed is not None:
                     scores = np.where(np.isin(ids, list(allowed)), scores, -np.inf)
                 top = np.argsort(-scores)[:pool]

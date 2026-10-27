@@ -8,6 +8,16 @@ that answer the query.
 A cross-encoder scores (query, passage) pairs. It is deterministic and generates nothing. It runs
 with onnxruntime, no torch (the `rerank` extra); the model is downloaded from the Hugging Face hub
 on first use. Unset, passages keep their fused retrieval order.
+
+Or a hosted cross-encoder, so no model is held in memory here:
+
+    PAPER_FETCH_RERANK_URL=https://api.example.com/v1   # serves POST /rerank
+    PAPER_FETCH_RERANK_MODEL=BAAI/bge-reranker-v2-m3    # the provider's name for it
+    PAPER_FETCH_RERANK_KEY_FILE=~/.config/paper-fetch/rerank.key
+
+The request is the Cohere/Jina form ({model, query, documents}), which most rerank services and
+self-hosted servers accept; answers as `results` with `relevance_score`, as a list of
+`{index, score}`, or as `scores` are all read.
 """
 
 from __future__ import annotations
@@ -15,9 +25,10 @@ from __future__ import annotations
 import os
 from typing import Any, Protocol
 
-from .passages import Passage
+from .http import Http
+from .passages import Passage, key_from_env
 
-__all__ = ["OnnxReranker", "Reranker", "reranker_from_env"]
+__all__ = ["ApiReranker", "OnnxReranker", "Reranker", "reranker_from_env"]
 
 
 class Reranker(Protocol):
@@ -70,9 +81,47 @@ class OnnxReranker:
         return out
 
 
+class ApiReranker:
+    """A cross-encoder behind a hosted `/rerank` endpoint. Scores come back in passage order."""
+
+    def __init__(
+        self, model: str, url: str, *, key: str = "", timeout: float = 60, http: Http | None = None
+    ) -> None:
+        self.model, self.url, self.timeout = model, url.rstrip("/"), timeout
+        self.name = f"api:{self.url}/{model}"
+        self.headers = {"Authorization": f"Bearer {key}"} if key else {}
+        self.http = http or Http()
+
+    def score(self, query: str, passages: list[Passage]) -> list[float]:
+        if not passages:
+            return []
+        payload = {"model": self.model, "query": query, "documents": [p.text for p in passages]}
+        try:
+            body = self.http.post_json(
+                f"{self.url}/rerank", payload, timeout=self.timeout, headers=self.headers
+            )
+        except ConnectionError as e:
+            raise ConnectionError(f"reranker {self.model}: {e}") from e
+        if isinstance(body, dict) and "scores" in body:
+            scores = [float(x) for x in body["scores"]]
+        else:
+            rows = body["results"] if isinstance(body, dict) else body
+            scores = [float("-inf")] * len(passages)
+            for row in rows:
+                scores[int(row["index"])] = float(row.get("relevance_score", row.get("score")))
+        if len(scores) != len(passages):
+            raise ConnectionError(
+                f"reranker {self.model}: {len(scores)} scores for {len(passages)} passages"
+            )
+        return scores
+
+
 def reranker_from_env() -> Reranker | None:
     spec = os.environ.get("PAPER_FETCH_RERANK_MODEL", "").strip()
     if not spec:
         return None
+    url = os.environ.get("PAPER_FETCH_RERANK_URL", "").strip()
+    if url:
+        return ApiReranker(spec, url, key=key_from_env("PAPER_FETCH_RERANK_KEY"))
     repo, _, file = spec.partition("::")
     return OnnxReranker(repo, file) if file else OnnxReranker(repo)
