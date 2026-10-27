@@ -150,13 +150,20 @@ class Http:
                 self.log.append((url, None, 0))
             raise ConnectionError(f"POST {url} failed: {e}") from e
 
-    def post_json(self, url: str, payload: Any, *, timeout: float | None = None) -> Any:
-        """POST a JSON body and return the decoded JSON answer. One attempt; for local services
-        (the embedding endpoint), not for the rate-limited providers."""
+    def post_json(
+        self,
+        url: str,
+        payload: Any,
+        *,
+        timeout: float | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> Any:
+        """POST a JSON body and return the decoded JSON answer. One attempt; for the model
+        services (embeddings, reranking), not for the rate-limited providers."""
         req = urllib.request.Request(
             url,
             json.dumps(payload).encode(),
-            {"User-Agent": user_agent(), "Content-Type": "application/json"},
+            {"User-Agent": user_agent(), "Content-Type": "application/json", **(headers or {})},
         )
         with self._lock:
             self.calls += 1

@@ -128,7 +128,9 @@ those files out of repositories (`chmod 600`).
 | `PAPER_FETCH_PROBLEMS` | Where provider defects are logged, one JSON object per line. Default `provider-problems.jsonl` in the local store's directory. Never in the store. |
 | `PAPER_FETCH_INDEX` | The passage index file. Default `passages.sqlite` in the local store's directory. Derived: deleting it loses nothing. |
 | `PAPER_FETCH_EMBED_MODEL`, `PAPER_FETCH_EMBED_URL` | An embedding model (e.g. `bge-m3`) on an Ollama-compatible endpoint (default `http://127.0.0.1:11434`). Unset, retrieval is lexical (BM25). |
+| `PAPER_FETCH_EMBED_API`, `PAPER_FETCH_EMBED_API_MODEL`, `PAPER_FETCH_EMBED_KEY` (or `_KEY_FILE`) | A hosted embedding model instead: `openai` uses an OpenAI-compatible `/embeddings` endpoint (chosen by default when `PAPER_FETCH_EMBED_URL` ends in `/v1`), with the provider's name for the model (e.g. `BAAI/bge-m3`) and its key. `PAPER_FETCH_EMBED_MODEL` stays the model's identity, so the index keeps working: use the same model the index was built with. |
 | `PAPER_FETCH_RERANK_MODEL` | A cross-encoder on the Hugging Face hub in ONNX form, `repo::file`, e.g. `onnx-community/bge-reranker-v2-m3-ONNX::onnx/model_int8.onnx`. Unset, no reranking. |
+| `PAPER_FETCH_RERANK_URL`, `PAPER_FETCH_RERANK_KEY` (or `_KEY_FILE`) | A hosted cross-encoder instead: `POST <url>/rerank` in the Cohere/Jina form, with `PAPER_FETCH_RERANK_MODEL` as the provider's name for it (e.g. `BAAI/bge-reranker-v2-m3`). Nothing is loaded in memory here. |
 | `PAPER_FETCH_S3_PUBLIC_URL` | S3 store: the anonymous base URL used to prove objects are *not* public. Default `https://<bucket>.<endpoint host>`. |
 
 ## Providers
@@ -353,7 +355,10 @@ papers/memory/searches.jsonl           search memory: one row per search
 ```
 
 The passage index is not in the store: it is a local SQLite file derived from the stored full
-texts (`PAPER_FETCH_INDEX`), one per machine, rebuilt by `paper-fetch index --rebuild`.
+texts (`PAPER_FETCH_INDEX`), one per machine, rebuilt by `paper-fetch index --rebuild`. Beside it,
+`<index>.vectors/` holds a half-precision copy of its vectors that every process on the machine
+memory-maps, so ten MCP servers share one copy instead of holding ten (about 330 MB for 160,000
+passages at 1024 dimensions). It is rebuilt when the vectors change and is safe to delete.
 
 The same layout is used on disk and in a bucket. A lookup reads the catalogue first and falls back
 to the per-work provenance, so a stale or deleted catalogue can slow a lookup down but can never

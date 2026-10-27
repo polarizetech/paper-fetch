@@ -9,15 +9,18 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from conftest import make_library
-from paper_fetch import Library
+from paper_fetch import Library, passages
 from paper_fetch import mcp_server as srv
 from paper_fetch.cli import main as cli_main
 from paper_fetch.passages import (
     CHUNKER,
+    SCORE_BLOCK,
     OllamaEmbedder,
+    OpenAIEmbedder,
     Passage,
     PassageIndex,
     chunk,
@@ -25,6 +28,8 @@ from paper_fetch.passages import (
     fts_query,
     references_start,
 )
+from paper_fetch.passages import _scores as scores_in_blocks
+from paper_fetch.rerank import ApiReranker, reranker_from_env
 
 DOI = "10.5555/example.001"  # W7 in make_library's OpenAlex fixture
 VOCAB = ["sleep", "memory", "heart", "rate", "exercise", "recall", "spindle", "athlete"]
@@ -427,3 +432,128 @@ def test_one_index_serves_many_threads_at_once(idx: PassageIndex) -> None:
 
     with ThreadPoolExecutor(max_workers=16) as pool:
         assert all(n > 0 for n in pool.map(work, range(200)))
+
+
+# -- the shared half-precision vector copy --------------------------------------------------------
+
+
+def test_vectors_are_a_shared_half_precision_file(idx: PassageIndex, tmp_path: Path) -> None:
+    idx.search("sleep memory", embed(["sleep memory"])[0])
+    files = sorted(p.name for p in (tmp_path / "p.sqlite.vectors").glob("*.npy"))
+    assert len(files) == 2
+    _, mat = idx._vectors()
+    assert mat.dtype == np.float16
+    assert isinstance(mat, np.memmap)
+
+    # Another process opening the same index maps the same file instead of building its own.
+    other = PassageIndex(tmp_path / "p.sqlite", "fake", embed)
+    _, theirs = other._vectors()
+    assert isinstance(theirs, np.memmap)
+    assert theirs.filename == mat.filename
+
+
+def test_another_processes_new_passages_are_seen(idx: PassageIndex, tmp_path: Path) -> None:
+    reader = PassageIndex(tmp_path / "p.sqlite", "fake", embed)
+    assert not reader.search("athlete", embed(["athlete"])[0], works=["WC"])
+    writer = PassageIndex(tmp_path / "p.sqlite", "fake", embed)
+    writer.add(rec("WC"), para("the athlete and the athlete again"))
+    found = reader.search("zzz", embed(["athlete"])[0], works=["WC"])  # dense only
+    assert found
+    assert (found[0].work, found[0].dense_rank) == ("WC", 1)
+    # The superseded copy is gone; only the current one is left.
+    assert len(list((tmp_path / "p.sqlite.vectors").glob("*.npy"))) == 2
+
+
+def test_half_precision_keeps_the_ranking() -> None:
+    rng = np.random.default_rng(0)
+    mat = rng.standard_normal((SCORE_BLOCK + 500, 64)).astype(np.float32)
+    mat /= np.linalg.norm(mat, axis=1, keepdims=True)
+    query = mat[7] + 0.3 * rng.standard_normal(64).astype(np.float32)
+    query /= np.linalg.norm(query)
+    exact = mat @ query
+    half = scores_in_blocks(np, mat.astype(np.float16), query)
+    assert np.abs(exact - half).max() < 2e-3
+    assert list(np.argsort(-exact)[:10]) == list(np.argsort(-half)[:10])
+
+
+def test_a_read_only_location_keeps_a_private_copy(
+    idx: PassageIndex, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def refuse(*_: Any) -> None:
+        raise PermissionError("read-only")
+
+    monkeypatch.setattr(passages, "_write_vectors", refuse)
+    hits = idx.search("sleep memory", embed(["sleep memory"])[0])
+    assert hits
+    assert hits[0].work == "WA"
+    assert not (tmp_path / "p.sqlite.vectors").exists()
+
+
+# -- hosted embeddings and reranking ---------------------------------------------------------------
+
+
+class Recorder:
+    def __init__(self, answer: Any) -> None:
+        self.answer, self.calls = answer, []
+
+    def post_json(self, url: str, payload: Any, **kw: Any) -> Any:
+        self.calls.append((url, payload, kw.get("headers")))
+        return self.answer(payload) if callable(self.answer) else self.answer
+
+
+def test_openai_embedder_batches_and_keeps_order() -> None:
+    def answer(payload: dict[str, Any]) -> dict[str, Any]:
+        rows = [{"index": i, "embedding": [float(len(t))]} for i, t in enumerate(payload["input"])]
+        return {"data": list(reversed(rows))}  # out of order on purpose
+
+    http = Recorder(answer)
+    e = OpenAIEmbedder("BAAI/bge-m3", "https://api.example/v1/", key="k", http=http, batch=2)  # type: ignore[arg-type]
+    assert e(["a", "bb", "ccc"]) == [[1.0], [2.0], [3.0]]
+    assert [c[0] for c in http.calls] == ["https://api.example/v1/embeddings"] * 2
+    assert http.calls[0][1]["model"] == "BAAI/bge-m3"
+    assert http.calls[0][2] == {"Authorization": "Bearer k"}
+
+
+def test_hosted_embeddings_are_chosen_from_the_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    key = tmp_path / "embed.key"
+    key.write_text("secret\n")
+    monkeypatch.setenv("PAPER_FETCH_EMBED_MODEL", "bge-m3")
+    monkeypatch.setenv("PAPER_FETCH_EMBED_URL", "https://api.example/v1")
+    monkeypatch.setenv("PAPER_FETCH_EMBED_API_MODEL", "BAAI/bge-m3")
+    monkeypatch.setenv("PAPER_FETCH_EMBED_KEY_FILE", str(key))
+    model, e = passages.embedder_from_env()
+    assert model == "bge-m3"  # the index keeps the model's identity
+    assert isinstance(e, OpenAIEmbedder)
+    assert e.model == "BAAI/bge-m3"
+    assert e.headers == {"Authorization": "Bearer secret"}
+    monkeypatch.setenv("PAPER_FETCH_EMBED_API", "carrier-pigeon")
+    with pytest.raises(RuntimeError, match="ollama' or 'openai"):
+        passages.embedder_from_env()
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        {"results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.1}]},
+        [{"index": 1, "score": 0.9}, {"index": 0, "score": 0.1}],
+        {"scores": [0.1, 0.9]},
+    ],
+)
+def test_api_reranker_reads_the_common_answer_shapes(answer: Any) -> None:
+    http = Recorder(answer)
+    r = ApiReranker("BAAI/bge-reranker-v2-m3", "https://api.example/v1", http=http)  # type: ignore[arg-type]
+    ps = [Passage("W1", 0, 0, 1, "first"), Passage("W2", 0, 0, 1, "second")]
+    assert r.score("q", ps) == [0.1, 0.9]
+    assert http.calls[0][0] == "https://api.example/v1/rerank"
+    assert http.calls[0][1]["documents"] == ["first", "second"]
+
+
+def test_a_rerank_url_selects_the_hosted_reranker(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PAPER_FETCH_RERANK_MODEL", "BAAI/bge-reranker-v2-m3")
+    monkeypatch.setenv("PAPER_FETCH_RERANK_URL", "https://api.example/v1")
+    monkeypatch.setenv("PAPER_FETCH_RERANK_KEY", "k")
+    r = reranker_from_env()
+    assert isinstance(r, ApiReranker)
+    assert r.headers == {"Authorization": "Bearer k"}
