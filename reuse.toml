@@ -1,0 +1,58 @@
+# Build-vs-reuse register: our own scientific code, and the open-source, peer-reviewed tool that
+# does (or could do) the same job. States: tandem | candidate | none-found | replaced.
+# Format: https://github.com/polarizetech/retrieval-augmented-generation/blob/main/docs/reuse-register.md
+# Seeded from the 2026-10-28 review of this repo; check entries as you touch the code.
+
+[[custom]]
+name = "Reciprocal rank fusion"
+path = "src/paper_fetch/passages.py"
+does = "hand-written RRF (k = 60) fusing BM25 and dense rankings (Cormack 2009)"
+state = "candidate"
+alternative = "ranx"
+check = ""
+note = "Hand re-implementation of a published method; compare fused rankings with ranx fuse(method='rrf') on the same runs"
+
+[[custom]]
+name = "Passage chunker"
+path = "src/paper_fetch/passages.py"
+does = "chunk: 1100/1600-char passages with reference-list stripping"
+state = "candidate"
+alternative = "BEIR"
+check = ""
+note = "Score the hybrid retrieval with this chunker on BEIR SciFact and TREC-COVID nDCG@10 (Thakur et al., NeurIPS 2021) and LitSearch (Ajith et al. 2024)"
+
+[[custom]]
+name = "Relevance score"
+path = "src/paper_fetch/library.py"
+does = "relevance: max cosine, Jaccard fallback"
+state = "candidate"
+alternative = "BEIR"
+check = ""
+note = "nDCG@10 on BEIR SciFact; only a synthetic test now"
+
+[[custom]]
+name = "Hit merge and ranking"
+path = "src/paper_fetch/library.py"
+does = "merges and dedups hits from several providers and ranks them"
+state = "candidate"
+alternative = "ranx"
+check = ""
+note = "Compare with ranx fusion methods on the same provider runs; evaluate on LitSearch"
+
+[[custom]]
+name = "Search-memory recall"
+path = "src/paper_fetch/memory.py"
+does = "recalls earlier searches by Jaccard similarity"
+state = "none-found"
+alternative = ""
+check = ""
+note = "No ref; a labelled set of repeated/related queries would be the check"
+
+[[custom]]
+name = "Prose gate"
+path = "src/paper_fetch/text.py"
+does = "is-this-prose test: >= 2000 chars and >= 55 % words"
+state = "none-found"
+alternative = ""
+check = ""
+note = "Thresholds chosen in-house (tests/test_text.py); ask the gateway for a text-extraction quality benchmark"
