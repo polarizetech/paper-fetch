@@ -68,7 +68,9 @@ def pdf_text(data: bytes) -> tuple[str | None, str]:
 
 
 def xml_text(data: bytes) -> tuple[str | None, str]:
-    """JATS (Europe PMC, PMC, bioRxiv) or TEI (GROBID) to text; body paragraphs where a body exists.
+    """JATS (Europe PMC, PMC, bioRxiv) or TEI (GROBID) to text; body paragraphs where a body exists,
+    and TEI display formulas with their equation label, in document order, so formulas are indexed
+    with the surrounding text.
 
     The parser is the standard library's, which does not resolve external entities.
     """
@@ -81,7 +83,27 @@ def xml_text(data: bytes) -> tuple[str | None, str]:
             el.tag = el.tag.split("}", 1)[1]
     body = root.find(".//body")
     scope = body if body is not None else root
-    paras = [" ".join("".join(p.itertext()).split()) for p in scope.iter("p")]
+    # GROBID writes display equations as <formula> elements apart from the <p> elements, with
+    # the equation number in a <label> (Lo et al., S2ORC: The Semantic Scholar Open Research
+    # Corpus). Keep them in document order so formulas and text are indexed together (Zanibbi,
+    # Mansouri and Agarwal, Mathematical Information Retrieval: Search and Question Answering).
+    nested = {id(f) for p in scope.iter("p") for f in p.iter("formula")}
+    paras: list[str] = []
+    for el in scope.iter():
+        if el.tag == "p":
+            paras.append(" ".join("".join(el.itertext()).split()))
+        elif el.tag == "formula" and id(el) not in nested:
+            label = el.find("label")
+            body = (el.text or "") + "".join(
+                (child.tail or "")
+                if child is label
+                else "".join(child.itertext()) + (child.tail or "")
+                for child in el
+            )
+            parts = [" ".join(body.split())]
+            if label is not None:
+                parts.append(" ".join("".join(label.itertext()).split()))
+            paras.append(" ".join(x for x in parts if x))
     text = "\n\n".join(p for p in paras if p)
     if not text:
         text = " ".join("".join(scope.itertext()).split())

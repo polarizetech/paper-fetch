@@ -65,3 +65,23 @@ def test_malformed_xml_is_reported() -> None:
     text, method = xml_text(b"<article><body>")
     assert text is None
     assert method.startswith("xml-parse-failed")
+
+
+def test_tei_keeps_formulas_with_labels_in_order() -> None:
+    """GROBID writes display equations apart from the paragraphs (Lo et al., S2ORC: The Semantic
+    Scholar Open Research Corpus); they must reach the text so formulas and prose are indexed
+    together (Zanibbi, Mansouri and Agarwal, Mathematical Information Retrieval: Search and
+    Question Answering)."""
+    tei = (
+        b"<TEI><text><body><div>"
+        b"<p>Before the map.</p>"
+        b"<formula>y = F (x) + K u(x),<label>(a)</label></formula>"
+        b"<formula>F (x) - x d &lt; K.</formula>"
+        b"<p>After the map.</p>"
+        b"</div></body></text></TEI>"
+    )
+    text, method = xml_text(tei)
+    assert method == "xml-tei"
+    assert text == (
+        "Before the map.\n\ny = F (x) + K u(x), (a)\n\nF (x) - x d < K.\n\nAfter the map."
+    )
