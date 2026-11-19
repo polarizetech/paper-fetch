@@ -9,6 +9,7 @@
     paper-fetch collect <name> <id> [...] [--remove]     list papers in a collection
     paper-fetch recall ["<query>"] [--profile P] [--collection C] [--work ID]
     paper-fetch index [id ...] [--collection C] [--refresh | --rebuild]   the passage index
+    paper-fetch reextract [id ...] [--collection C]   re-extract stored TEI, re-index changed
     paper-fetch retrieve "<query>" [--collection C] [--work ID ...] [-n N] passages, best first
     paper-fetch providers                                what is enabled, what each needs, its terms
     paper-fetch library ["<query>"] [--full-text]        search only what is already held
@@ -94,6 +95,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--collection")
     p.add_argument("--refresh", action="store_true", help="re-index texts that changed")
     p.add_argument("--rebuild", action="store_true", help="delete the index and index again")
+
+    p = sub.add_parser("reextract", help="re-extract stored TEI originals, re-index changed")
+    p.add_argument("ids", nargs="*")
+    p.add_argument("--collection")
 
     p = sub.add_parser("retrieve", help="passages of held papers that answer a query")
     p.add_argument("query")
@@ -258,6 +263,18 @@ def _index(lib: Library, a: argparse.Namespace) -> None:
     print(json.dumps(lib.passages.stats()))
 
 
+def _reextract(lib: Library, a: argparse.Namespace) -> None:
+    r = lib.reextract(a.ids or None, collection=a.collection)
+    print(
+        f"re-extracted {len(r['reextracted'])} paper(s), {r['passages_added']} passages; "
+        f"{r['unchanged']} unchanged"
+    )
+    for sk in r["skipped"]:
+        print(f"  skipped: {sk['work']}: {sk['why']}")
+    if r["skipped"]:
+        print(f"{len(r['skipped'])} record(s) skipped; the rest were re-extracted")
+
+
 def _retrieve(lib: Library, a: argparse.Namespace) -> None:
     res = lib.retrieve(
         a.query,
@@ -339,6 +356,8 @@ def _dispatch(lib: Library, a: argparse.Namespace) -> int:
         _recall(lib, a)
     elif a.cmd == "index":
         _index(lib, a)
+    elif a.cmd == "reextract":
+        _reextract(lib, a)
     elif a.cmd == "retrieve":
         _retrieve(lib, a)
     elif a.cmd == "library":

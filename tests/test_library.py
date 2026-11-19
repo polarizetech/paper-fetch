@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
@@ -24,6 +25,7 @@ from conftest import (
 from paper_fetch import Library, LocalStore, MemoryStore, NotFound
 from paper_fetch.http import Response
 from paper_fetch.ids import doi_key
+from paper_fetch.passages import PassageIndex
 from paper_fetch.providers import Hit, Location, ProviderUnavailable
 
 DOI = "10.5555/example.001"
@@ -390,3 +392,96 @@ def test_default_library_uses_the_local_store(tmp_path: Path) -> None:
 def test_offline_helpers_are_offline() -> None:
     lib = Library(MemoryStore(), offline_openalex(FakeHttp()), providers=[good_provider()])
     assert lib.lookup(DOI) is None
+
+
+# ---------------------------------------------------------------------------------- reextract
+
+REEX = "W9"
+REEX_OLD = PROSE.encode()  # an old extraction: the prose, with no formula
+REEX_TEI = (
+    "<TEI xmlns='http://www.tei-c.org/ns/1.0'><text><body>"
+    + "".join(f"<p>{PROSE[:400]}</p>" for _ in range(8))
+    + "<formula>psi = qarnax<label>(1)</label></formula>"
+    + "</body></text></TEI>"
+).encode()
+
+
+def _seed_tei_work(lib: Library, *, tei: bool = True) -> None:
+    """A held work fetched before the formula fix: its stored text has no formula."""
+    base = f"papers/works/{REEX}/"
+    files = {"fulltext.txt": hashlib.sha256(REEX_OLD).hexdigest()}
+    lib.store.put(base + "fulltext.txt", REEX_OLD, "text/plain; charset=utf-8")
+    if tei:
+        lib.store.put(base + "fulltext.tei.xml", REEX_TEI, "application/xml")
+        files["fulltext.tei.xml"] = hashlib.sha256(REEX_TEI).hexdigest()
+    work = {"id": f"https://openalex.org/{REEX}", "title": "A TEI work", "authorships": []}
+    prov = {
+        "work": REEX,
+        "retrieved": "2026-01-01T00:00:00Z",
+        "full_text": True,
+        "file_stored": True,
+        "route": "good:tei-xml",
+        "format": "tei-xml",
+        "text_method": "xml-tei",
+        "text_gate": "old",
+        "sha256": files,
+        "ids": {"openalex": REEX},
+        "retry_after": None,
+    }
+    lib.store.put(base + "work.json", json.dumps(work).encode())
+    lib.store.put(base + "provenance.json", json.dumps(prov, indent=1).encode())
+    lib.rebuild_index()
+
+
+def test_reextract_applies_the_current_extraction_to_stored_tei(tmp_path: Path) -> None:
+    lib, _ = make_library()
+    _seed_tei_work(lib)
+    tei_before = lib.store.get(f"papers/works/{REEX}/fulltext.tei.xml")
+    report = lib.reextract([REEX])
+    assert report["reextracted"] == [REEX]
+    assert report["skipped"] == []
+    text = lib.store.get(f"papers/works/{REEX}/fulltext.txt").decode()
+    assert "psi = qarnax" in text
+    assert "(1)" in text
+    prov = lib.provenance(REEX)
+    assert prov["sha256"]["fulltext.txt"] == hashlib.sha256(text.encode()).hexdigest()
+    last = prov["reextracted"][-1]
+    assert set(last) >= {"date", "old_sha256", "new_sha256", "text_method"}
+    assert last["old_sha256"] == hashlib.sha256(REEX_OLD).hexdigest()
+    assert last["new_sha256"] == prov["sha256"]["fulltext.txt"]
+    assert lib.store.get(f"papers/works/{REEX}/fulltext.tei.xml") == tei_before
+    assert prov["sha256"]["fulltext.tei.xml"] == hashlib.sha256(tei_before).hexdigest()
+
+
+def test_reextract_twice_writes_nothing_the_second_time() -> None:
+    lib, _ = make_library()
+    _seed_tei_work(lib)
+    lib.reextract([REEX])
+    text = lib.store.get(f"papers/works/{REEX}/fulltext.txt")
+    prov = lib.store.get(f"papers/works/{REEX}/provenance.json")
+    again = lib.reextract([REEX])
+    assert again["unchanged"] == 1
+    assert again["reextracted"] == []
+    assert lib.store.get(f"papers/works/{REEX}/fulltext.txt") == text
+    assert lib.store.get(f"papers/works/{REEX}/provenance.json") == prov
+
+
+def test_reextract_skips_a_work_with_no_stored_tei() -> None:
+    lib, _ = make_library()
+    _seed_tei_work(lib, tei=False)
+    report = lib.reextract([REEX])
+    assert report["reextracted"] == []
+    assert [s["work"] for s in report["skipped"]] == [REEX]
+    assert "no stored TEI XML" in report["skipped"][0]["why"]
+
+
+def test_reextract_reindexes_the_passages_of_the_changed_text(tmp_path: Path) -> None:
+    lib, _ = make_library()
+    _seed_tei_work(lib)
+    lib.passages = PassageIndex(tmp_path / "p.sqlite")
+    assert lib.index_works([REEX])["indexed"] == [REEX]
+    assert [p for r in lib.retrieve("qarnax")["results"] for p in r["passages"]] == []
+    report = lib.reextract([REEX])
+    assert report["passages_added"] > 0
+    hits = [p for r in lib.retrieve("qarnax")["results"] for p in r["passages"]]
+    assert any(p["work"] == REEX and "qarnax" in p["text"] for p in hits)
