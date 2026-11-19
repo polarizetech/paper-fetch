@@ -13,6 +13,7 @@ uv run paper-fetch search "reproducible computational research"   # every provid
 uv run paper-fetch providers                                        # what is on, what each needs; no network
 uv run paper-fetch library "reproducible" --full-text
 uv run paper-fetch citations 10.1371/journal.pcbi.1003285           # who cites it; --references for what it cites
+uv run paper-fetch reextract [id ...] [--collection C]          re-extract stored TEI originals, re-index changed
 ```
 
 Configuration is `PAPER_FETCH_*` plus five provider keys, read from the environment and from

@@ -70,7 +70,7 @@ from .providers.web import parse_ids
 from .rerank import Reranker, reranker_from_env
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
-from .text import is_pdf, looks_like_prose, pdf_text
+from .text import is_pdf, looks_like_prose, pdf_text, xml_text
 
 __all__ = ["INDEX", "Library", "NotFound", "Record"]
 
@@ -465,6 +465,73 @@ class Library:
                 report["passages_added"] += added
             else:
                 report["unchanged"] += 1
+        return report
+
+    def reextract(
+        self,
+        identifiers: Sequence[str] | None = None,
+        *,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Re-runs the current text extraction on stored TEI originals so papers fetched before an
+        extraction fix get it. A work whose new text differs gets its `fulltext.txt`, provenance
+        and passages replaced; the rest are counted unchanged and nothing is rewritten. A work
+        with no stored TEI XML, or whose new text fails the prose gate, is skipped and left as it
+        is. Local only: no network."""
+        rows, missing = self._scope(identifiers, collection)
+        if rows is None:
+            rows = self._rows()
+        report: dict[str, Any] = {
+            "reextracted": [],
+            "unchanged": 0,
+            "skipped": [{"work": key, "why": "not held"} for key in missing],
+            "passages_added": 0,
+        }
+        for rec in rows:
+            wid = rec["work"]
+            base = f"{PREFIX}works/{wid}/"
+            if not self.store.has(base + "fulltext.tei.xml"):
+                report["skipped"].append({"work": wid, "why": "no stored TEI XML"})
+                continue
+            text, method = xml_text(self.store.get(base + "fulltext.tei.xml"))
+            ok, reason = looks_like_prose(text)
+            if text is None or not ok:
+                why = method if text is None else "NOT readable: " + reason
+                report["skipped"].append({"work": wid, "why": why})
+                continue
+            new = text.encode()
+            old = self.store.get(base + _TEXT[0]) if self.store.has(base + _TEXT[0]) else None
+            if new == old:
+                report["unchanged"] += 1
+                continue
+            prov = json.loads(self.store.get(base + "provenance.json"))
+            sums = dict(prov.get("sha256") or {})
+            old_sha = sums.get(_TEXT[0])
+            self.store.put(base + _TEXT[0], new, _TEXT[1])
+            new_sha = _sha256(new)
+            sums[_TEXT[0]] = new_sha
+            prov.update(
+                sha256=sums,
+                text_method=method,
+                text_gate=reason,
+                full_text=True,
+            )
+            prov.setdefault("reextracted", []).append(
+                {
+                    "date": _now(),
+                    "old_sha256": old_sha,
+                    "new_sha256": new_sha,
+                    "text_method": method,
+                }
+            )
+            self._put_json(base + "provenance.json", prov, indent=1)
+            try:  # as index_works: a failure is reported for this work, never fatal to the run
+                added = self.passages.add(rec, text)
+            except (ValueError, KeyError, NotFound, OSError) as e:
+                report["skipped"].append({"work": wid, "why": f"{type(e).__name__}: {e}"})
+                continue
+            report["reextracted"].append(wid)
+            report["passages_added"] += added
         return report
 
     def retrieve(
