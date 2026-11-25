@@ -55,7 +55,15 @@ from .idconv import enrich, europepmc_meta
 from .ids import Ident, doi_key, normalize, pmcid_from_openalex
 from .memory import SearchMemory, concepts
 from .openalex import OpenAlex
-from .passages import Passage, PassageIndex, embedder_from_env, index_path
+from .passages import (
+    EMBED_ROUTE,
+    RERANK_ROUTE,
+    ROUTES,
+    Passage,
+    PassageIndex,
+    embedder_from_env,
+    index_path,
+)
 from .profiles import Profile, load_profiles, vocabulary
 from .providers import (
     FALLBACK_SEARCH,
@@ -67,7 +75,13 @@ from .providers import (
     build,
 )
 from .providers.web import parse_ids
-from .rerank import Reranker, reranker_from_env
+from .rerank import (
+    ApiReranker,
+    Reranker,
+    local_reranker_from_env,
+    rerank_by_default,
+    reranker_from_env,
+)
 from .resolve import resolve
 from .store import PREFIX, Store, store_from_env
 from .text import is_pdf, looks_like_prose, pdf_text, xml_text
@@ -180,6 +194,7 @@ class Library:
         self._passages: PassageIndex | None = None
         self._reranker: Reranker | None = None
         self._reranker_built = False
+        self._local_reranker: Reranker | None = None  # rerank_route="droplet", built on use
 
     @classmethod
     def default(cls) -> Library:
@@ -405,6 +420,32 @@ class Library:
     def reranker(self, value: Reranker | None) -> None:
         self._reranker, self._reranker_built = value, True
 
+    def local_reranker(self) -> Reranker:
+        """The in-process cross-encoder a call asks for with rerank_route="droplet", built once."""
+        with self._lock:
+            if self._local_reranker is None:
+                self._local_reranker = local_reranker_from_env()
+            return self._local_reranker
+
+    def _chosen_reranker(self, rerank: bool | None, route: str) -> Reranker | None:
+        """The cross-encoder for one retrieval. False: none. True or a route: one, or an error
+        when none is configured. None: the configured one if PAPER_FETCH_RERANK_DEFAULT is on."""
+        if rerank is False:
+            return None
+        if route == "droplet":
+            return self.local_reranker()
+        reranker = self.reranker
+        if not (rerank or route):
+            return reranker if reranker is not None and rerank_by_default() else None
+        if reranker is None:
+            raise ValueError("rerank requested but PAPER_FETCH_RERANK_MODEL is not set")
+        if route and not isinstance(reranker, ApiReranker):
+            raise ValueError(
+                f"rerank_route {route!r} needs the hosted reranker: set PAPER_FETCH_RERANK_URL "
+                "to the models router"
+            )
+        return reranker
+
     def _scope(
         self, identifiers: Sequence[str] | None, collection: str | None
     ) -> tuple[list[Record] | None, list[str]]:
@@ -544,15 +585,58 @@ class Library:
         pool: int = 100,
         per_paper: int | None = None,
         rerank: bool | None = None,
+        rerank_route: str = "",
+        embed_route: str = "",
     ) -> dict[str, Any]:
         """The passages that best answer each query, from held full texts.
 
         Scope: the papers named by `identifiers` and/or `collection` (indexed first if they are
         not yet), else the whole passage index. Ranking: BM25 fused with dense similarity when an
-        embedding model is configured, then the cross-encoder when one is configured and `rerank`
-        is not False. `per_paper` caps passages from any one paper. Each passage carries its
-        stable `id` (`<work>#p<ord>`), exact offsets into the indexed text, and its paper.
+        embedding model is configured, then the cross-encoder. `rerank` False skips it, True
+        requires it, None follows PAPER_FETCH_RERANK_DEFAULT. `per_paper` caps passages from any
+        one paper. Each passage carries its stable `id` (`<work>#p<ord>`), exact offsets into the
+        indexed text, and its paper.
+
+        `rerank_route` and `embed_route` choose where this call's reranking and embeddings run:
+        `modal` or `mac` name the models router's upstream (the X-Models-Route header), and
+        `droplet` (rerank only) runs the ONNX cross-encoder in this process. There is no
+        in-process embedding model, so `embed_route` is modal or mac.
         """
+        if embed_route and embed_route not in ROUTES:
+            why = " (there is no in-process embedding model)" if embed_route == "droplet" else ""
+            raise ValueError(f"embed_route must be modal or mac, not {embed_route!r}{why}")
+        if rerank_route and rerank_route not in (*ROUTES, "droplet"):
+            raise ValueError(f"rerank_route must be modal, mac or droplet, not {rerank_route!r}")
+        if rerank_route and rerank is False:
+            raise ValueError("rerank_route asks for reranking: drop rerank=False")
+        reranker = self._chosen_reranker(rerank, rerank_route)
+        embed_token = EMBED_ROUTE.set(embed_route)
+        rerank_token = RERANK_ROUTE.set(rerank_route if rerank_route in ROUTES else "")
+        try:
+            return self._ranked(
+                queries,
+                identifiers=identifiers,
+                collection=collection,
+                limit=limit,
+                pool=pool,
+                per_paper=per_paper,
+                reranker=reranker,
+            )
+        finally:
+            RERANK_ROUTE.reset(rerank_token)
+            EMBED_ROUTE.reset(embed_token)
+
+    def _ranked(
+        self,
+        queries: str | Sequence[str],
+        *,
+        identifiers: Sequence[str] | None,
+        collection: str | None,
+        limit: int,
+        pool: int,
+        per_paper: int | None,
+        reranker: Reranker | None,
+    ) -> dict[str, Any]:
         qs = [queries] if isinstance(queries, str) else list(queries)
         rows, missing = self._scope(identifiers, collection)
         indexed = None
@@ -561,9 +645,6 @@ class Library:
             indexed = self.index_works([r["work"] for r in rows])
             indexed["not_held"] = missing
             works = [r["work"] for r in rows if r["full_text"]]
-        reranker = self.reranker if rerank is not False else None
-        if rerank and reranker is None:
-            raise ValueError("rerank requested but PAPER_FETCH_RERANK_MODEL is not set")
         candidates = max(limit * 3, 30) if reranker else limit * (3 if per_paper else 1)
         papers: dict[str, dict[str, Any] | None] = {}
         results = []

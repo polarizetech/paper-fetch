@@ -224,6 +224,9 @@ def retrieve(  # noqa: PLR0917 -- MCP clients pass every argument by name
     collection: str = "",
     limit: int = 20,
     per_paper: int = 0,
+    rerank: bool | None = None,
+    rerank_route: str = "",
+    embed_route: str = "",
 ) -> dict[str, Any]:
     """The passages of held papers that best answer each query, best first.
 
@@ -231,7 +234,9 @@ def retrieve(  # noqa: PLR0917 -- MCP clients pass every argument by name
     indexed paper. Give one `query` or several `queries` (one result list each). Each passage has a
     stable `id` (<work>#p<ord>), `start`/`end` offsets into the paper's indexed text, its `text`,
     ranks, and its paper (title, year, doi, is_retracted, hidden_chars, ...). `per_paper` caps
-    passages from one paper (0 = no cap).
+    passages from one paper (0 = no cap). `rerank` false skips the cross-encoder for this call,
+    true requires it; unset follows the library's default. `rerank_route` (modal, mac, droplet)
+    and `embed_route` (modal, mac) choose where this call's reranking and embeddings run.
     """
     qs = [*([query] if query else []), *(queries or [])]
     if not qs:
@@ -243,6 +248,9 @@ def retrieve(  # noqa: PLR0917 -- MCP clients pass every argument by name
             collection=collection or None,
             limit=limit,
             per_paper=per_paper or None,
+            rerank=rerank,
+            rerank_route=rerank_route,
+            embed_route=embed_route,
         )
     )
 
