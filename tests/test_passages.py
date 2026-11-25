@@ -147,7 +147,9 @@ def test_ollama_embedder_posts_to_the_configured_endpoint() -> None:
     sent: list[tuple[str, Any]] = []
 
     class Http:
-        def post_json(self, url: str, payload: Any, *, timeout: float | None = None) -> Any:
+        def post_json(
+            self, url: str, payload: Any, *, timeout: float | None = None, headers: Any = None
+        ) -> Any:
             sent.append((url, payload))
             return {"embeddings": [[1.0, 0.0]]}
 
@@ -557,3 +559,93 @@ def test_a_rerank_url_selects_the_hosted_reranker(monkeypatch: pytest.MonkeyPatc
     r = reranker_from_env()
     assert isinstance(r, ApiReranker)
     assert r.headers == {"Authorization": "Bearer k"}
+
+
+# ---------------------------------------------------------------------------------- routes
+
+
+class Constant:
+    """A reranker that scores every passage 0, under a name."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def score(self, query: str, passages: list[Passage]) -> list[float]:
+        return [0.0] * len(passages)
+
+
+def test_a_route_choice_sends_the_router_header() -> None:
+    http = Recorder({"embeddings": [[1.0]]})
+    e = OllamaEmbedder("bge-m3", "http://router", http=http)  # type: ignore[arg-type]
+    e(["a"])
+    assert http.calls[-1][2] == {}
+    token = passages.EMBED_ROUTE.set("mac")
+    try:
+        e(["a"])
+    finally:
+        passages.EMBED_ROUTE.reset(token)
+    assert http.calls[-1][2] == {"X-Models-Route": "mac"}
+    http.answer = {"scores": [0.5]}
+    r = ApiReranker("rr", "http://router", key="k", http=http)  # type: ignore[arg-type]
+    token = passages.RERANK_ROUTE.set("modal")
+    try:
+        r.score("q", [Passage("W1", 0, 0, 1, "first")])
+    finally:
+        passages.RERANK_ROUTE.reset(token)
+    assert http.calls[-1][2] == {"Authorization": "Bearer k", "X-Models-Route": "modal"}
+
+
+def test_retrieve_routes_its_model_calls(tmp_path: Path) -> None:
+    lib = _library(tmp_path)
+    lib.passages.add(rec("WA"), PAPER_A)
+    seen: list[str] = []
+
+    def routed(texts: list[str]) -> list[list[float]]:
+        seen.append(passages.EMBED_ROUTE.get())
+        return embed(texts)
+
+    lib.passages.embed = routed
+    http = Recorder(lambda payload: {"scores": [0.0] * len(payload["documents"])})
+    lib.reranker = ApiReranker("rr", "http://router", http=http)  # type: ignore[arg-type]
+    res = lib.retrieve("sleep memory", rerank_route="mac", embed_route="modal")
+    assert res["reranker"] == "api:http://router/rr"
+    assert seen[-1] == "modal"
+    assert http.calls[-1][2] == {"X-Models-Route": "mac"}
+    assert (passages.EMBED_ROUTE.get(), passages.RERANK_ROUTE.get()) == ("", "")
+    lib.retrieve("sleep memory")
+    assert seen[-1] == ""
+    assert http.calls[-1][2] == {}
+
+
+def test_retrieve_refuses_a_route_it_cannot_serve(tmp_path: Path) -> None:
+    lib = _library(tmp_path)
+    with pytest.raises(ValueError, match="no in-process embedding model"):
+        lib.retrieve("sleep", embed_route="droplet")
+    with pytest.raises(ValueError, match="rerank_route must be"):
+        lib.retrieve("sleep", rerank_route="gpu")
+    with pytest.raises(ValueError, match="drop rerank=False"):
+        lib.retrieve("sleep", rerank=False, rerank_route="mac")
+    lib.reranker = Constant("onnx")
+    with pytest.raises(ValueError, match="needs the hosted reranker"):
+        lib.retrieve("sleep", rerank_route="mac")
+    srv._library = lib
+    try:
+        assert srv.retrieve(query="sleep", rerank_route="gpu")["code"] == "tool_error"
+        assert srv.retrieve(query="sleep", rerank=False)["data"]["reranker"] is None
+    finally:
+        srv._library = None
+
+
+def test_rerank_default_off_and_the_droplet_reranker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lib = _library(tmp_path)
+    lib.reranker = Constant("hosted")
+    lib._local_reranker = Constant("local")
+    monkeypatch.setenv("PAPER_FETCH_RERANK_DEFAULT", "off")
+    assert lib.retrieve("sleep")["reranker"] is None
+    assert lib.retrieve("sleep", rerank=True)["reranker"] == "hosted"
+    assert lib.retrieve("sleep", rerank_route="droplet")["reranker"] == "local"
+    monkeypatch.setenv("PAPER_FETCH_RERANK_DEFAULT", "sometimes")
+    with pytest.raises(RuntimeError, match="PAPER_FETCH_RERANK_DEFAULT"):
+        lib.retrieve("sleep")

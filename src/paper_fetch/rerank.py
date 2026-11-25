@@ -26,9 +26,16 @@ import os
 from typing import Any, Protocol
 
 from .http import Http
-from .passages import Passage, key_from_env
+from .passages import RERANK_ROUTE, Passage, key_from_env, route_headers
 
-__all__ = ["ApiReranker", "OnnxReranker", "Reranker", "reranker_from_env"]
+__all__ = [
+    "ApiReranker",
+    "OnnxReranker",
+    "Reranker",
+    "local_reranker_from_env",
+    "rerank_by_default",
+    "reranker_from_env",
+]
 
 
 class Reranker(Protocol):
@@ -98,7 +105,10 @@ class ApiReranker:
         payload = {"model": self.model, "query": query, "documents": [p.text for p in passages]}
         try:
             body = self.http.post_json(
-                f"{self.url}/rerank", payload, timeout=self.timeout, headers=self.headers
+                f"{self.url}/rerank",
+                payload,
+                timeout=self.timeout,
+                headers={**self.headers, **route_headers(RERANK_ROUTE)},
             )
         except ConnectionError as e:
             raise ConnectionError(f"reranker {self.model}: {e}") from e
@@ -116,6 +126,12 @@ class ApiReranker:
         return scores
 
 
+def onnx_reranker(spec: str) -> OnnxReranker:
+    """An OnnxReranker from `repo` or `repo::file`."""
+    repo, _, file = spec.partition("::")
+    return OnnxReranker(repo, file) if file else OnnxReranker(repo)
+
+
 def reranker_from_env() -> Reranker | None:
     spec = os.environ.get("PAPER_FETCH_RERANK_MODEL", "").strip()
     if not spec:
@@ -123,5 +139,26 @@ def reranker_from_env() -> Reranker | None:
     url = os.environ.get("PAPER_FETCH_RERANK_URL", "").strip()
     if url:
         return ApiReranker(spec, url, key=key_from_env("PAPER_FETCH_RERANK_KEY"))
-    repo, _, file = spec.partition("::")
-    return OnnxReranker(repo, file) if file else OnnxReranker(repo)
+    return onnx_reranker(spec)
+
+
+def local_reranker_from_env() -> Reranker:
+    """The in-process cross-encoder for a call that asks for `droplet`:
+    PAPER_FETCH_RERANK_LOCAL_MODEL (`repo::file`). Needs the `rerank` extra; the model is
+    downloaded on first use. Unset, a `droplet` call is refused."""
+    spec = os.environ.get("PAPER_FETCH_RERANK_LOCAL_MODEL", "").strip()
+    if not spec:
+        raise RuntimeError(
+            "rerank_route='droplet' needs PAPER_FETCH_RERANK_LOCAL_MODEL (an ONNX cross-encoder, "
+            "repo::file)"
+        )
+    return onnx_reranker(spec)
+
+
+def rerank_by_default() -> bool:
+    """False when PAPER_FETCH_RERANK_DEFAULT is `off`: the configured reranker then runs only for
+    calls that ask for it (rerank=True or a rerank_route). `on` (the default) reranks always."""
+    value = os.environ.get("PAPER_FETCH_RERANK_DEFAULT", "on").strip().lower() or "on"
+    if value not in {"on", "off"}:
+        raise RuntimeError(f"PAPER_FETCH_RERANK_DEFAULT must be 'on' or 'off', not {value!r}")
+    return value == "on"

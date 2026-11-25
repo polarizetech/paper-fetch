@@ -43,6 +43,7 @@ import threading
 import time
 import weakref
 from collections.abc import Callable, Iterable, Sequence
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -50,7 +51,11 @@ from typing import Any
 from .http import Http
 
 __all__ = [
+    "EMBED_ROUTE",
     "HIDDEN",
+    "RERANK_ROUTE",
+    "ROUTES",
+    "ROUTE_HEADER",
     "Embedder",
     "OllamaEmbedder",
     "OpenAIEmbedder",
@@ -62,6 +67,7 @@ __all__ = [
     "fts_query",
     "index_path",
     "key_from_env",
+    "route_headers",
 ]
 
 #: The version of `chunk`. A paper indexed by an older one is re-chunked the next time it is
@@ -231,6 +237,23 @@ class Passage:
         return {"id": self.id, "sha": self.sha, **asdict(self)}
 
 
+#: The header that tells the models router (deploy/models_router.py in research-rag) which
+#: upstream serves a call: `modal` or `mac`. Without it the router picks.
+ROUTE_HEADER = "X-Models-Route"
+#: The upstreams a call may name.
+ROUTES = ("modal", "mac")
+#: This call's choices, set by `Library.retrieve` for the length of one retrieval. ContextVars,
+#: so tool calls running at once on other worker threads keep their own.
+EMBED_ROUTE: ContextVar[str] = ContextVar("paper_fetch_embed_route", default="")
+RERANK_ROUTE: ContextVar[str] = ContextVar("paper_fetch_rerank_route", default="")
+
+
+def route_headers(route: ContextVar[str]) -> dict[str, str]:
+    """The router header for this call's choice in `route`; none when no choice was made."""
+    value = route.get()
+    return {ROUTE_HEADER: value} if value else {}
+
+
 class OllamaEmbedder:
     """Vectors from an Ollama-compatible `/api/embed` endpoint. Deterministic; generates nothing."""
 
@@ -247,7 +270,12 @@ class OllamaEmbedder:
     def __call__(self, texts: list[str]) -> list[list[float]]:
         payload = {"model": self.model, "input": texts, "keep_alive": "30m"}
         try:
-            out = self.http.post_json(f"{self.url}/api/embed", payload, timeout=self.timeout)
+            out = self.http.post_json(
+                f"{self.url}/api/embed",
+                payload,
+                timeout=self.timeout,
+                headers=route_headers(EMBED_ROUTE),
+            )
         except ConnectionError as e:
             raise ConnectionError(f"embedding model {self.model}: {e}") from e
         return out["embeddings"]
@@ -281,7 +309,10 @@ class OpenAIEmbedder:
             payload = {"model": self.model, "input": texts[i : i + self.batch]}
             try:
                 body = self.http.post_json(
-                    f"{self.url}/embeddings", payload, timeout=self.timeout, headers=self.headers
+                    f"{self.url}/embeddings",
+                    payload,
+                    timeout=self.timeout,
+                    headers={**self.headers, **route_headers(EMBED_ROUTE)},
                 )
             except ConnectionError as e:
                 raise ConnectionError(f"embedding model {self.model}: {e}") from e

@@ -131,6 +131,8 @@ those files out of repositories (`chmod 600`).
 | `PAPER_FETCH_EMBED_API`, `PAPER_FETCH_EMBED_API_MODEL`, `PAPER_FETCH_EMBED_KEY` (or `_KEY_FILE`) | A hosted embedding model instead: `openai` uses an OpenAI-compatible `/embeddings` endpoint (chosen by default when `PAPER_FETCH_EMBED_URL` ends in `/v1`), with the provider's name for the model (e.g. `BAAI/bge-m3`) and its key. `PAPER_FETCH_EMBED_MODEL` stays the model's identity, so the index keeps working: use the same model the index was built with. |
 | `PAPER_FETCH_RERANK_MODEL` | A cross-encoder on the Hugging Face hub in ONNX form, `repo::file`, e.g. `onnx-community/bge-reranker-v2-m3-ONNX::onnx/model_int8.onnx`. Unset, no reranking. |
 | `PAPER_FETCH_RERANK_URL`, `PAPER_FETCH_RERANK_KEY` (or `_KEY_FILE`) | A hosted cross-encoder instead: `POST <url>/rerank` in the Cohere/Jina form, with `PAPER_FETCH_RERANK_MODEL` as the provider's name for it (e.g. `BAAI/bge-reranker-v2-m3`). Nothing is loaded in memory here. |
+| `PAPER_FETCH_RERANK_DEFAULT` | `on` (default) or `off`. `off` keeps the configured reranker for calls that ask for it (`retrieve(rerank=True)` or a `rerank_route`) and skips it otherwise. |
+| `PAPER_FETCH_RERANK_LOCAL_MODEL` | The ONNX cross-encoder that a `retrieve(rerank_route="droplet")` call runs in this process (`repo::file`; needs the `rerank` extra). Unset, `droplet` calls are refused. `rerank_route` / `embed_route` = `modal` or `mac` send `X-Models-Route` to the models router at `PAPER_FETCH_RERANK_URL` / `PAPER_FETCH_EMBED_URL`. |
 | `PAPER_FETCH_S3_PUBLIC_URL` | S3 store: the anonymous base URL used to prove objects are *not* public. Default `https://<bucket>.<endpoint host>`. |
 
 ## Providers
